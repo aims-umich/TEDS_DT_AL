@@ -7,24 +7,32 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+RESULTS_CSV_DIR = REPO_ROOT / "results" / "result_csv"
+
 # ---------- PATHS ----------
 # MvG-SINDyC
-SINDY_RANDOM = "/home/unabila/ghxSindy/Rndm_AL_10init10_CI_rmse_mae_results/Rndm4traj_10init10_CI_rmse_mae_results.csv"
-SINDY_AL     = "/home/unabila/ghxSindy/Rndm_AL_10init10_CI_rmse_mae_results/AL_4traj_10init10_CI_rmse_mae_resultr.csv"
+SINDY_RANDOM = RESULTS_CSV_DIR / "Rndm_AL_10init10_CI_rmse_mae_results" / "Rndm4traj_10init10_CI_rmse_mae_results.csv"
+SINDY_AL     = RESULTS_CSV_DIR / "Rndm_AL_10init10_CI_rmse_mae_results" / "AL_4traj_10init10_CI_rmse_mae_resultr.csv"
 
 # SINDyC (non-MvG)
-SINDYC_RANDOM = "/home/unabila/ghxSindy/rmdm_incExp_errorAL10sindy_exp_metrics.csv"
-SINDYC_AL     = "/home/unabila/ghxSindy/incExp_errorAL10sindy_exp_metrics.csv"
+SINDYC_RANDOM = RESULTS_CSV_DIR / "rmdm_incExp_errorAL10sindy_exp_metrics.csv"
+SINDYC_AL     = RESULTS_CSV_DIR / "incExp_errorAL10sindy_exp_metrics.csv"
 
 # FNN
-FNN_WITH_EXP_AL   = "/home/unabila/ghxSindy/fnn_active_figs/active_learning_exp_metrics.csv"
-FNN_WITH_EXP_RND  = "/home/unabila/ghxSindy/rndmFNN_sampling_results_fnn/incremental_metrics.csv"
-FNN_WO_EXP_AL     = "/home/unabila/ghxSindy/WO_fnn_active_results/active_learning_exp_metrics.csv"
-FNN_WO_EXP_RND    = "/home/unabila/ghxSindy/WO_rndm_sampling_results_fnn/incremental_metrics.csv"
+FNN_WITH_EXP_AL   = RESULTS_CSV_DIR / "fnn_active_figs" / "active_learning_exp_metrics.csv"
+FNN_WITH_EXP_RND  = RESULTS_CSV_DIR / "rndmFNN_sampling_results_fnn" / "incremental_metrics.csv"
+FNN_WO_EXP_AL     = RESULTS_CSV_DIR / "WO_fnn_active_results" / "active_learning_exp_metrics.csv"
+FNN_WO_EXP_RND    = RESULTS_CSV_DIR / "timeWO_rndm_sampling_results_fnn" / "incremental_metrics.csv"
 
 # GRU
-GRU_RANDOM  = "/home/unabila/ghxSindy/rndm_gru_sampling_results/incremental_metrics10.csv"
-GRU_AL      = "/home/unabila/ghxSindy/gru_al_figs/active_learning10_exp_metrics.csv"
+GRU_RANDOM  = RESULTS_CSV_DIR / "time_rndm_gru_sampling_results" / "incremental_metrics.csv"
+GRU_AL      = RESULTS_CSV_DIR / "time_gru_al_figs" / "active_learning_exp_metrics.csv"
+
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_DIR.mkdir(exist_ok=True)
 
 # ---------- STYLE ----------
 plt.rcParams.update({
@@ -197,7 +205,7 @@ fig.text(0.5, 0.72,  "MvG-SINDyC",   ha="center", va="bottom", fontsize=20)
 fig.text(0.5, 0.49,  "FNN",          ha="center", va="bottom", fontsize=20)
 fig.text(0.5, 0.28,  "GRU",          ha="center", va="bottom", fontsize=20)
 
-out_png = "rmse_trends_4x2.png"
+out_png = RESULTS_DIR /"rmse_trends_4x2.png"
 fig.savefig(out_png, dpi=600, bbox_inches="tight")
 print(f"[OK] Saved {out_png}")
 plt.close(fig)

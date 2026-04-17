@@ -19,30 +19,34 @@ plt.rcParams.update({
     "figure.titlesize": 22,
 })
 
-# ----------- Paths -----------
-SIM_PATHS = {
 
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+
+SIM_PATHS = {
     121: {
-        "SINDyC":          "/home/unabila/ghxSindy/cv_holdout_preds/ghx_pred_index121.csv",
-        "GRU":             "/home/unabila/ghxSindy/gru_results/pred_121.csv",
-        "FNN (with EXP)":  "/home/unabila/ghxSindy/sim_figs_fnn/pred_121.csv",
-        "FNN (w/o EXP)":   "/home/unabila/ghxSindy/wo_sim_figs_fnn/pred_121.csv",
+        "SINDyC":         REPO_ROOT / "data" / "cv_holdout_preds" / "ghx_pred_index121.csv",
+        "GRU":            REPO_ROOT / "data" / "gru_results" / "pred_121.csv",
+        "FNN (with EXP)": REPO_ROOT / "data" / "sim_figs_fnn" / "pred_121.csv",
+        "FNN (w/o EXP)":  REPO_ROOT / "data" / "wo_sim_figs_fnn" / "pred_121.csv",
     },
-    
     176: {
-        "SINDyC":          "/home/unabila/ghxSindy/cv_holdout_preds/ghx_pred_index176.csv",
-        "GRU":             "/home/unabila/ghxSindy/gru_results/pred_176.csv",
-        "FNN (with EXP)":  "/home/unabila/ghxSindy/sim_figs_fnn/pred_176.csv",
-        "FNN (w/o EXP)":   "/home/unabila/ghxSindy/wo_sim_figs_fnn/pred_176.csv",
+        "SINDyC":         REPO_ROOT / "data" / "cv_holdout_preds" / "ghx_pred_index176.csv",
+        "GRU":            REPO_ROOT / "data" / "gru_results" / "pred_176.csv",
+        "FNN (with EXP)": REPO_ROOT / "data" / "sim_figs_fnn" / "pred_176.csv",
+        "FNN (w/o EXP)":  REPO_ROOT / "data" / "wo_sim_figs_fnn" / "pred_176.csv",
     },
-        
     300: {
-        "SINDyC":          "/home/unabila/ghxSindy/cv_holdout_preds/ghx_pred_index363.csv",
-        "GRU":             "/home/unabila/ghxSindy/gru_sim_results/pred_300.csv",
-        "FNN (with EXP)":  "/home/unabila/ghxSindy/sim_figs_fnn/pred_300.csv",
-        "FNN (w/o EXP)":   "/home/unabila/ghxSindy/wo_sim_figs_fnn/pred_300.csv",
+        "SINDyC":         REPO_ROOT / "data" / "cv_holdout_preds" / "ghx_pred_index300.csv",
+        "GRU":            REPO_ROOT / "data" / "gru_results" / "pred_300.csv",
+        "FNN (with EXP)": REPO_ROOT / "data" / "sim_figs_fnn" / "pred_300.csv",
+        "FNN (w/o EXP)":  REPO_ROOT / "data" / "wo_sim_figs_fnn" / "pred_300.csv",
     },
 }
+
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_DIR.mkdir(exist_ok=True)
 
 # ----------- Styling (unchanged) -----------
 STYLES = {
@@ -159,5 +163,5 @@ labels  = [h.get_label() for h in handles]
 fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.04),
            ncol=len(handles), frameon=True, handlelength=2.2, handletextpad=0.6, columnspacing=1.2)
 
-plt.savefig("ghx3_model_predictions_3x2.png", dpi=300, bbox_inches="tight")
+plt.savefig(RESULTS_DIR / "ghx3_model_predictions_3x2.png", dpi=300, bbox_inches="tight")
 plt.close()

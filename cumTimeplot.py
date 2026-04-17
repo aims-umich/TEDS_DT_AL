@@ -6,6 +6,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+CSV_DIR = REPO_ROOT / "results" / "result_csv"
+
+
 plt.rcParams.update({
     "font.size": 16, "axes.titlesize": 20, "axes.labelsize": 18,
     "xtick.labelsize": 15, "ytick.labelsize": 15,
@@ -18,23 +24,24 @@ X_SCALE = 10  # models per iteration
 # ---------- INPUT PATHS ----------
 # Keep these two as your MvG-SINDyC timings:
 paths = {
-    "MvG-SINDyC - Random": "/home/unabila/ghxSindy/time4rndm_4traj_10init10_CI_rmse_mae_results.csv",
-    "MvG-SINDyC - AL":     "/home/unabila/ghxSindy/time4rndm_4traj_10init10_CI_rmse_mae_results.csv",  
+    "MvG-SINDyC - Random":      CSV_DIR / "time4rndm_4traj_10init10_CI_rmse_mae_results.csv",
+    "MvG-SINDyC - AL":          CSV_DIR / "time4rndm_4traj_10init10_CI_rmse_mae_results.csv",
 
-    # NEW: deterministic SINDyC timings (put your deterministic time CSVs here)
-    "SINDyC - Random":     "/home/unabila/ghxSindy/rmdm_incExp_errorAL10sindy_exp_metrics.csv",
-    "SINDyC - AL":         "/home/unabila/ghxSindy/incExp_errorAL10sindy_exp_metrics.csv",
+    "SINDyC - Random":          CSV_DIR / "rndm_incExp_errorAL10sindy_exp_metrics.csv",
+    "SINDyC - AL":              CSV_DIR / "incExp_errorAL10sindy_exp_metrics.csv",
 
+    "GRU - AL":                 CSV_DIR / "time_gru_al_figs" / "active_learning_exp_metrics.csv",
+    "GRU - Random":             CSV_DIR / "time_rndm_gru_sampling_results" / "incremental_metrics.csv",
 
-    "GRU - AL":            "/home/unabila/ghxSindy/time_gru_al_figs/active_learning_exp_metrics.csv",
-    "GRU - Random":        "/home/unabila/ghxSindy/time_rndm_gru_sampling_results/incremental_metrics.csv",
+    "FNN (with EXP) - AL":      CSV_DIR / "fnn_active_figs" / "active_learning_exp_metrics.csv",
+    "FNN (with EXP) - Random":  CSV_DIR / "rndmFNN_sampling_results_fnn" / "incremental_metrics.csv",
 
-    "FNN (with EXP) - AL":     "/home/unabila/ghxSindy/fnn_active_figs/active_learning_exp_metrics.csv",
-    "FNN (with EXP) - Random": "/home/unabila/ghxSindy/rndmFNN_sampling_results_fnn/incremental_metrics.csv",
-
-    "FNN (w/o EXP) - AL":      "/home/unabila/ghxSindy/WO_fnn_active_results/active_learning_exp_metrics.csv",
-    "FNN (w/o EXP) - Random":  "/home/unabila/ghxSindy/timeWO_rndm_sampling_results_fnn/incremental_metrics.csv",
+    "FNN (w/o EXP) - AL":       CSV_DIR / "WO_fnn_active_results" / "active_learning_exp_metrics.csv",
+    "FNN (w/o EXP) - Random":   CSV_DIR / "timeWO_rndm_sampling_results_fnn" / "incremental_metrics.csv",
 }
+
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_DIR.mkdir(exist_ok=True)
 
 # ---------- COLORS & STYLES ----------
 colors = {
@@ -217,6 +224,6 @@ for spine in ("top", "right"):
     ax.spines[spine].set_visible(False)
 
 plt.tight_layout()
-plt.savefig("cumulative_time_all_runs_0_500.png", dpi=300, bbox_inches="tight")
+plt.savefig(RESULTS_DIR /"cumulative_time_all_models_0_500.png", dpi=300, bbox_inches="tight")
 plt.close()
 print("Saved: cumulative_time_all_runs_0_500.png")

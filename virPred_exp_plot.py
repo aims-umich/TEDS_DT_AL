@@ -4,6 +4,10 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+RESULTS_CSV_DIR = REPO_ROOT / "results" / "result_csv"
 
 plt.rcParams.update({
     "font.size": 16,
@@ -17,16 +21,19 @@ plt.rcParams.update({
 
 # ----------------- Paths -----------------
 paths = {
-    # MvG-SINDyC mean predictions (same file as before)
-    "MvG-SINDyC_MEAN":  "/home/unabila/ghxSindy/4_tj_exp_pred_sindy/exp_pred_index160.csv",
+    # MvG-SINDyC mean predictions
+    "MvG-SINDyC_MEAN":  RESULTS_CSV_DIR / "4_tj_exp_pred_sindy" / "exp_pred_index160.csv",
+
     # MvG-SINDyC sigmas (time-varying)
-    "MvG-SINDyC_SIGMA": "/home/unabila/ghxSindy/sigma_4_tj_exp_pred_sindy/exp_pred_index120.csv",
+    "MvG-SINDyC_SIGMA": RESULTS_CSV_DIR / "sigma_4_tj_exp_pred_sindy" / "exp_pred_index120.csv",
+
     # SINDy (no UQ): exp-only fit
-    "SINDy":            "/home/unabila/ghxSindy/exp_only_pred_sindy/exp_pred.csv",
+    "SINDy":            RESULTS_CSV_DIR / "exp_only_pred_sindy" / "exp_pred.csv",
+
     # GRU / FNN
-    "GRU":              "/home/unabila/ghxSindy/gru_pred_exp_results/pred_300_mq.csv",
-    "FNN (with EXP)":   "/home/unabila/ghxSindy/fnn_pred_exp_results/experiment_predictions_mq.csv",
-    "FNN (w/o EXP)":    "/home/unabila/ghxSindy/wo_fnn_pred_exp_results/experiment_predictions_mq.csv",
+    "GRU":              RESULTS_CSV_DIR / "gru_pred_exp_results" / "pred_300_mq.csv",
+    "FNN (with EXP)":   RESULTS_CSV_DIR / "fnn_pred_exp_results" / "experiment_predictions_mq.csv",
+    "FNN (w/o EXP)":    RESULTS_CSV_DIR / "wo_fnn_pred_exp_results" / "experiment_predictions_mq.csv",
 }
 
 # ----------------- Styling -----------------
@@ -37,6 +44,10 @@ STYLES = {
     "FNN (with EXP)": dict(color="#ff7f0e", ls="-.", marker="^"),
     "FNN (w/o EXP)":  dict(color="#9467bd", ls="--", marker="D"),
 }
+
+
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_DIR.mkdir(exist_ok=True)
 
 BAND_ALPHA = 0.22
 SIGMA_MULT = 3    # ~95% band for Gaussian assumption
@@ -195,6 +206,6 @@ fig.legend(all_handles, all_labels,
            handlelength=2.2, handletextpad=0.6, columnspacing=1.0)
 plt.subplots_adjust(bottom=0.18)
 
-plt.savefig("Exp_ghx_model_sigmaMerge_2x1.png", dpi=300, bbox_inches="tight")
+plt.savefig(RESULTS_DIR /"Exp_ghx_model_sigmaMerge_2x1.png", dpi=300, bbox_inches="tight")
 plt.close()
 print("Saved: Exp_ghx_model_sigmaMerge_2x1.png")
