@@ -29,7 +29,10 @@ plt.rcParams.update({
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = "ghx_data_csv"  # folder with ghx_run{idx}.csv
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PRINT_SHAPES = True
 

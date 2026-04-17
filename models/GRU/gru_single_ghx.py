@@ -28,8 +28,12 @@ from contextlib import nullcontext
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = "ghx_data_csv"  # folder with ghx_run{idx}.csv
-DEVICE   = "cuda" if torch.cuda.is_available() else "cpu"
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 PRINT_SHAPES = True
 
 # Pick test files to visualize/evaluate
@@ -207,6 +211,12 @@ metrics_rows = []
 plot_done = False
 os.makedirs("figs_gru", exist_ok=True)
 
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]   # TEDS_DT_AL/
+RESULTS_DIR = REPO_ROOT / "results" / "gru_results"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
 model.eval()
 with torch.no_grad(), autocast():
     for rid, U, X in test_runs:
@@ -220,66 +230,68 @@ with torch.no_grad(), autocast():
         U_n = u_scaler.transform(U).astype(np.float32)
         X_n = y_scaler.transform(X).astype(np.float32)
 
-        # build windows on the fly for this file
-        seqs = np.stack([U_n[t-LOOKBACK:t, :] for t in range(LOOKBACK, len(U_n))], axis=0)  # (T-L, L, D)
+        seqs = np.stack([U_n[t-LOOKBACK:t, :] for t in range(LOOKBACK, len(U_n))], axis=0)
         xb   = torch.tensor(seqs, device=DEVICE)
-        Yp_n = model(xb).cpu().numpy()      # (T-L, 2)
+        Yp_n = model(xb).cpu().numpy()
         Yp   = y_scaler.inverse_transform(Yp_n)
 
-        X_true = X[LOOKBACK:, :]            # align ground truth
+        X_true = X[LOOKBACK:, :]
 
-        # metrics
         rmse_m = mean_squared_error(X_true[:,0], Yp[:,0], squared=False)
         rmse_q = mean_squared_error(X_true[:,1], Yp[:,1], squared=False)
         mape_m = mean_absolute_percentage_error(X_true[:,0], Yp[:,0]) * 100.0
         mape_q = mean_absolute_percentage_error(X_true[:,1], Yp[:,1]) * 100.0
         metrics_rows.append([rid, rmse_m, rmse_q, mape_m, mape_q])
 
-        # plots for one file
         if not plot_done and rid == PLOT_FILE_ID:
             t = np.arange(LOOKBACK, LOOKBACK + len(X_true), dtype=float)
 
-            # m
             plt.figure(figsize=(10,3))
             plt.plot(t, X_true[:,0], label="m true")
             plt.plot(t, Yp[:,0], label="m pred (GRU)", alpha=0.85)
-            plt.xlabel("time step"); plt.ylabel("mflow_GHX_bypass")
+            plt.xlabel("time step")
+            plt.ylabel("mflow_GHX_bypass")
             plt.title(f"File {rid} m: true vs pred (GRU, L={LOOKBACK})")
-            plt.legend(); plt.grid(True, alpha=0.3)
-            plt.tight_layout(); plt.savefig(f"figs_gru/file_{rid}_m_timeseries.png", dpi=300); plt.close()
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(RESULTS_DIR / f"file_{rid}_m_timeseries.png", dpi=300)
+            plt.close()
 
-            # q
             plt.figure(figsize=(10,3))
             plt.plot(t, X_true[:,1], label="q true")
             plt.plot(t, Yp[:,1], label="q pred (GRU)", alpha=0.85)
-            plt.xlabel("time step"); plt.ylabel("qghx_kW")
+            plt.xlabel("time step")
+            plt.ylabel("qghx_kW")
             plt.title(f"File {rid} q: true vs pred (GRU, L={LOOKBACK})")
-            plt.legend(); plt.grid(True, alpha=0.3)
-            plt.tight_layout(); plt.savefig(f"figs_gru/file_{rid}_q_timeseries.png", dpi=300); plt.close()
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(RESULTS_DIR / f"file_{rid}_q_timeseries.png", dpi=300)
+            plt.close()
 
-            # parity
             plt.figure(figsize=(5,5))
             plt.scatter(X_true[:,0], Yp[:,0], s=6, alpha=0.45)
             lo, hi = float(min(X_true[:,0].min(), Yp[:,0].min())), float(max(X_true[:,0].max(), Yp[:,0].max()))
             plt.plot([lo,hi],[lo,hi],"--")
-            plt.xlabel("m true"); plt.ylabel("m pred (GRU)")
-            plt.title(f"File {rid} parity m"); plt.grid(True, alpha=0.3)
-            plt.tight_layout(); plt.savefig(f"figs_gru/file_{rid}_m_parity.png", dpi=300); plt.close()
+            plt.xlabel("m true")
+            plt.ylabel("m pred (GRU)")
+            plt.title(f"File {rid} parity m")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(RESULTS_DIR / f"file_{rid}_m_parity.png", dpi=300)
+            plt.close()
 
             plt.figure(figsize=(5,5))
             plt.scatter(X_true[:,1], Yp[:,1], s=6, alpha=0.45)
             lo, hi = float(min(X_true[:,1].min(), Yp[:,1].min())), float(max(X_true[:,1].max(), Yp[:,1].max()))
             plt.plot([lo,hi],[lo,hi],"--")
-            plt.xlabel("q true"); plt.ylabel("q pred (GRU)")
-            plt.title(f"File {rid} parity q"); plt.grid(True, alpha=0.3)
-            plt.tight_layout(); plt.savefig(f"figs_gru/file_{rid}_q_parity.png", dpi=300); plt.close()
+            plt.xlabel("q true")
+            plt.ylabel("q pred (GRU)")
+            plt.title(f"File {rid} parity q")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(RESULTS_DIR / f"file_{rid}_q_parity.png", dpi=300)
+            plt.close()
 
             plot_done = True
-
-# Print metrics table
-if len(metrics_rows):
-    print("\n== Per-file metrics (GRU) ==")
-    for rid, rm_m, rm_q, mp_m, mp_q in metrics_rows:
-        print(f"File {rid:>4d} | RMSE m={rm_m:.3f} q={rm_q:.3f} | MAPE m={mp_m:.2f}% q={mp_q:.2f}%")
-else:
-    print("No selected test files were evaluated. Check TEST_FILE_IDS_TO_EVAL and test split.")
