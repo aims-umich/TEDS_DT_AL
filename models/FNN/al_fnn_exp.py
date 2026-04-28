@@ -28,12 +28,21 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+from pathlib import Path
 
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = "ghx_data_csv"  # ghx_run{idx}.csv
-EXP_CSV  = "/home/unabila/ghxSindy/experiment_csv/experiment_ghx_formatted.csv"
+REPO_ROOT = Path(__file__).resolve().parents[2]   # TEDS_DT_AL/
+DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"    # ghx_run{idx}.csv
+EXP_CSV  = REPO_ROOT / "data" / "experiment_csv" / "experiment_ghx_formatted.csv"
+
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_CSV_DIR = RESULTS_DIR / "result_csv"
+OUT_DIR = RESULTS_CSV_DIR / "fnn_active_figs"
+
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SEED   = 42
@@ -75,7 +84,7 @@ def load_all_sim_runs(dirpath):
         if not m:
             continue
         rid = int(m.group(1))
-        df = pd.read_csv(os.path.join(dirpath, fn))
+        df = pd.read_csv(dirpath / fn)
         if not set(CTRL4).issubset(df.columns) or not set(STATE_NAMES).issubset(df.columns):
             continue
         U = df[CTRL4].to_numpy(dtype=np.float32)
@@ -310,36 +319,7 @@ while True:
 # -----------------------------
 # Save summary CSV + learning curves
 # -----------------------------
-df = pd.DataFrame(results).sort_values("n_files").reset_index(drop=True)
-csv_path = os.path.join(OUT_DIR, "active_learning_exp_metrics.csv")
+plt.savefig(OUT_DIR / f"{tag}_q_timeseries.png", dpi=300, bbox_inches="tight")
+csv_path = OUT_DIR / "active_learning_exp_metrics.csv"
 df.to_csv(csv_path, index=False)
-print(f"\nSaved experiment metrics to {csv_path}")
 
-# Curves
-plt.figure(figsize=(10,5))
-plt.plot(df["n_files"], df["rmse_m"], marker="o", label="RMSE m")
-plt.plot(df["n_files"], df["rmse_q"], marker="o", label="RMSE q")
-plt.xlabel("# files used for training (cumulative, sims + EXP)")
-plt.ylabel("RMSE"); plt.title("EXP RMSE vs # training files (FNN AL, EXP in pool)")
-plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-#plt.savefig(os.path.join(OUT_DIR, "exp_rmse_vs_files.png"), dpi=300); plt.close()
-
-plt.figure(figsize=(10,5))
-plt.plot(df["n_files"], df["mae_m"], marker="o", label="MAE m")
-plt.plot(df["n_files"], df["mae_q"], marker="o", label="MAE q")
-plt.xlabel("# files used for training (cumulative, sims + EXP)")
-plt.ylabel("MAE"); plt.title("EXP MAE vs # training files (FNN AL, EXP in pool)")
-plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-#plt.savefig(os.path.join(OUT_DIR, "exp_mae_vs_files.png"), dpi=300); plt.close()
-
-# ---- added: runtime curves
-plt.figure(figsize=(10,5))
-plt.plot(df["n_files"], df["cumulative_runtime_sec"], marker="o", label="Cumulative runtime")
-plt.plot(df["n_files"], df["iter_runtime_sec"], marker="s", label="Per-iteration runtime")
-plt.xlabel("# files used for training (cumulative, sims + EXP)")
-plt.ylabel("Runtime (seconds)")
-plt.title("Runtime vs # files (FNN Active Learning)")
-plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-#plt.savefig(os.path.join(OUT_DIR, "runtime_vs_files.png"), dpi=300); plt.close()
-
-print(f"Saved plots to {OUT_DIR}/")
