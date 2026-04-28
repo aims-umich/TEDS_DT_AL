@@ -29,10 +29,29 @@ plt.rcParams.update({
 # -----------------------------
 # Config
 # -----------------------------
+import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent
-DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"
+# Find repo root by walking upward until paths.py is found
+_THIS_FILE = Path(__file__).resolve()
+for parent in [_THIS_FILE.parent] + list(_THIS_FILE.parents):
+    if (parent / "paths.py").exists():
+        REPO_ROOT = parent
+        break
+else:
+    raise RuntimeError("Could not find repo root containing paths.py")
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+    
+    
+from paths import GHX_DATA_DIR, FNN_SIM_DIR, ensure_dirs
+
+ensure_dirs()
+
+DATA_DIR = GHX_DATA_DIR
+OUT_DIR = FNN_SIM_DIR
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PRINT_SHAPES = True
 
@@ -55,7 +74,7 @@ def load_all(dirpath):
         if not m:
             continue
         rid = int(m.group(1))
-        df = pd.read_csv(os.path.join(dirpath, fn))
+        df = pd.read_csv(dirpath / fn)
         U = df[CTRL_NAMES].to_numpy(dtype=np.float32)
         X = df[STATE_NAMES].to_numpy(dtype=np.float32)
         T = min(len(U), len(X))
@@ -138,83 +157,3 @@ for ep in range(40):
     if PRINT_SHAPES:
         print(f"Epoch {ep+1:02d} | train MSE={tot/len(train_ds):.6f}")
 
-# -----------------------------
-# Evaluate ONLY on selected test files
-# -----------------------------
-# make sure requested IDs are in the test set
-TEST_FILE_IDS_TO_EVAL = [rid for rid in TEST_FILE_IDS_TO_EVAL if rid in test_ids]
-assert len(TEST_FILE_IDS_TO_EVAL) > 0, "Requested test IDs are not in the test split."
-
-metrics_rows = []
-plot_done = False
-os.makedirs("sim_figs_fnn", exist_ok=True)
-
-for rid, U, X in test_runs:
-    if rid not in TEST_FILE_IDS_TO_EVAL:
-        continue
-
-    # Normalize controls, predict, inverse-scale
-    U_n = u_scaler.transform(U).astype(np.float32)
-    with torch.no_grad():
-        xb = torch.tensor(U_n, device=DEVICE)
-        Yp_n = model(xb).cpu().numpy()
-    Yp = y_scaler.inverse_transform(Yp_n)
-
-    df_pred = pd.DataFrame({
-        "rid": rid,
-        "m_true": X[:, 0],
-        "m_pred": Yp[:, 0],
-        "q_true": X[:, 1],
-        "q_pred": Yp[:, 1],
-    })
-    out_file = os.path.join("sim_figs_fnn", f"pred_{rid}.csv")
-    df_pred.to_csv(out_file, index=False)
-
-    print(f"[SAVED] {out_file}")
-
-        
-    # Compute built-in metrics per file
-    rmse_m = mean_squared_error(X[:,0], Yp[:,0], squared=False)
-    rmse_q = mean_squared_error(X[:,1], Yp[:,1], squared=False)
-    mae_m = mean_absolute_error(X[:,0], Yp[:,0]) 
-    mae_q = mean_absolute_error(X[:,1], Yp[:,1]) 
-
-    metrics_rows.append([rid, rmse_m, rmse_q, mae_m, mae_q])
-
-    # Plot ONE file (time-series overlays)
-    if not plot_done and rid == PLOT_FILE_ID:
-        t = np.arange(len(X), dtype=float)
-        # m
-        plt.figure(figsize=(10,3))
-        plt.plot(t, X[:,0], label="m true")
-        plt.plot(t, Yp[:,0], label="m pred", alpha=0.8)
-        plt.xlabel("time step")
-        plt.ylabel("mflow_GHX_bypass")
-        plt.title(f"File {rid} m: true vs pred")
-        plt.legend(); plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"sim_figs_fnn/4_file_{rid}_m_timeseries.png", dpi=300)
-        plt.close()
-
-        # q
-        plt.figure(figsize=(10,3))
-        plt.plot(t, X[:,1], label="q true")
-        plt.plot(t, Yp[:,1], label="q pred", alpha=0.8)
-        plt.xlabel("time step")
-        plt.ylabel("qghx_kW")
-        plt.title(f"File {rid} q: true vs pred")
-        plt.legend(); plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"sim_figs_fnn/4_file_{rid}_q_timeseries.png", dpi=300)
-        plt.close()
-
-
-        plot_done = True
-
-# Print metrics table
-if len(metrics_rows):
-    print("\n== Per-file metrics ==")
-    for rid, rm_m, rm_q, mp_m, mp_q in metrics_rows:
-        print(f"File {rid:>4d} | RMSE m={rm_m:.3f} q={rm_q:.3f} | MAPE m={mp_m:.2f}% q={mp_q:.2f}%")
-else:
-    print("No selected test files were evaluated. Check TEST_FILE_IDS_TO_EVAL and test split.")

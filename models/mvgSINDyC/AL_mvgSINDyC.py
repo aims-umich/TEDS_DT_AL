@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import sdf
-import json,pickle
+import json, pickle
 from itertools import combinations
 import random
 from scipy.stats import t
@@ -12,7 +12,7 @@ from scipy.stats import t
 from scipy.signal import savgol_filter
 
 # Optimization
-from scipy import optimize,interpolate
+from scipy import optimize, interpolate
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
 from scipy import interpolate
@@ -36,8 +36,41 @@ from scipy.stats import norm
 # misc
 from tqdm import tqdm
 from shutil import copyfile
-import os,sys
+import os, sys
 import seaborn as sns
+from pathlib import Path
+
+# -----------------------------
+# Path bootstrap
+# -----------------------------
+_THIS_FILE = Path(__file__).resolve()
+for parent in [_THIS_FILE.parent] + list(_THIS_FILE.parents):
+    if (parent / "paths.py").exists():
+        REPO_ROOT = parent
+        break
+else:
+    raise RuntimeError("Could not find repo root containing paths.py")
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from paths import (
+    NEWBOUNDS_TRAIN_DIR,
+    TES_EXP_PKL,
+    GHX_EXP_PKL,
+    U_EXP_PKL,
+    RESULTS_DIR,
+    RESULTS_CSV_DIR,
+    ensure_dirs,
+)
+
+ensure_dirs()
+
+# Custom folder used by this script
+save_dir = NEWBOUNDS_TRAIN_DIR
+model_dir = REPO_ROOT / "data" / "newbounds_4tj_samplestotrain_model_directory"
+model_dir.mkdir(parents=True, exist_ok=True)
+
 
 # Load several functions to process the results
 # ---
@@ -133,7 +166,6 @@ def get_confidence_interval_indicator_ghx(x_ghx_sim_experiment, valid_indices, p
         return 0.0, np.nan, np.nan, np.nan, np.nan
 
 
-    
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -229,7 +261,7 @@ def plot_simulation_and_metrics(x_ghx_sim_experiment, selected_model_len):
         ax[row][1].legend()
 
     plt.tight_layout()
-    plt.savefig(f"try4Tj_10init10_summary_selected_{selected_model_len}.png", dpi=300)
+    plt.savefig(RESULTS_DIR / f"try4Tj_10init10_summary_selected_{selected_model_len}.png", dpi=300)
     plt.close()
 
     return (
@@ -431,7 +463,6 @@ def process_model(t, x, u,model_tes,model_ghx):
                    + model_tes.coefficients()[0][7]*mout_pump
                    + model_tes.coefficients()[0][8]*Tout_pump
                    + model_tes.coefficients()[0][9]*Tout_heater
-                   #+ model_tes.coefficients()[0][7]*Tin_tes
                   )
 
     dTout_tes_dt = (model_tes.coefficients()[1][0]
@@ -440,12 +471,10 @@ def process_model(t, x, u,model_tes,model_ghx):
                     + model_tes.coefficients()[1][3]*Ttop_tes
                     + model_tes.coefficients()[1][4]*Tmid_tes
                     + model_tes.coefficients()[1][5]*Tbot_tes
-                    # control actions
                     + model_tes.coefficients()[1][6]*PV_tes
                     + model_tes.coefficients()[1][7]*mout_pump
                     + model_tes.coefficients()[1][8]*Tout_pump
                     + model_tes.coefficients()[1][9]*Tout_heater
-                    #+ model_tes.coefficients()[1][7]*Tin_tes
                    )
 
     dTtop_tes_dt = (model_tes.coefficients()[2][0]
@@ -454,58 +483,48 @@ def process_model(t, x, u,model_tes,model_ghx):
                     + model_tes.coefficients()[2][3]*Ttop_tes
                     + model_tes.coefficients()[2][4]*Tmid_tes
                     + model_tes.coefficients()[2][5]*Tbot_tes
-                    # control actions
                     + model_tes.coefficients()[2][6]*PV_tes
                     + model_tes.coefficients()[2][7]*mout_pump
                     + model_tes.coefficients()[2][8]*Tout_pump
                     + model_tes.coefficients()[2][9]*Tout_heater
-                    #+ model_tes.coefficients()[2][7]*Tin_tes
                    )
 
     dTmid_tes_dt = (model_tes.coefficients()[3][0]
                    + model_tes.coefficients()[3][1]*m_tes
                    + model_tes.coefficients()[3][2]*Tout_tes + model_tes.coefficients()[3][3]*Ttop_tes
                    + model_tes.coefficients()[3][4]*Tmid_tes + model_tes.coefficients()[3][5]*Tbot_tes
-                   # control actions
                    + model_tes.coefficients()[3][6]*PV_tes
                    + model_tes.coefficients()[3][7]*mout_pump
                    + model_tes.coefficients()[3][8]*Tout_pump
                    + model_tes.coefficients()[3][9]*Tout_heater
-                    #+ model_tes.coefficients()[3][7]*Tin_tes
                    )
 
     dTbot_tes_dt = (model_tes.coefficients()[4][0]
                    + model_tes.coefficients()[4][1]*m_tes
                    + model_tes.coefficients()[4][2]*Tout_tes + model_tes.coefficients()[4][3]*Ttop_tes
                    + model_tes.coefficients()[4][4]*Tmid_tes + model_tes.coefficients()[4][5]*Tbot_tes
-                   # control actions
                    + model_tes.coefficients()[4][6]*PV_tes
                    + model_tes.coefficients()[4][7]*mout_pump
                    + model_tes.coefficients()[4][8]*Tout_pump
                    + model_tes.coefficients()[4][9]*Tout_heater
-                    #+ model_tes.coefficients()[4][7]*Tin_tes
                    )
 
     dmbp_ghx_dt = (model_ghx.coefficients()[0][0]
                    + model_ghx.coefficients()[0][1]*mbp_ghx
                    + model_ghx.coefficients()[0][2]*Q_ghx
-                   # control actions
                    + model_ghx.coefficients()[0][3]*PV_tes
                    + model_ghx.coefficients()[0][4]*mout_pump
                    + model_ghx.coefficients()[0][5]*Tout_pump
                    + model_ghx.coefficients()[0][6]*Tout_heater
-                   #+ model_ghx.coefficients()[0][7]*T_chiller
                   )
 
     dQ_ghx_dt = (model_ghx.coefficients()[1][0]
                    + model_ghx.coefficients()[1][1]*mbp_ghx
                    + model_ghx.coefficients()[1][2]*Q_ghx
-                   # control actions
                    + model_ghx.coefficients()[1][3]*PV_tes
                    + model_ghx.coefficients()[1][4]*mout_pump
                    + model_ghx.coefficients()[1][5]*Tout_pump
                    + model_ghx.coefficients()[1][6]*Tout_heater
-                   #+ model_ghx.coefficients()[1][7]*T_chiller
                  )
 
     dxdt = np.concatenate(
@@ -529,21 +548,15 @@ def simulate_sindyc(model_tes,model_ghx,x_tes,x_ghx,u_ghx_train,t_hat):
 
     :return y_hat: (list) Prediction of the SINDyC model
     """
-    # Initialize integrator keywords for solve_ivp to replicate the odeint defaults
-    # ---
     integrator_keywords = {}
     integrator_keywords['rtol'] = 1e-12
-    integrator_keywords['method'] = 'LSODA'#RK45
+    integrator_keywords['method'] = 'LSODA'
     integrator_keywords['atol'] = 1e-12
 
-    # Initialize the starting point
-    # ---
     y_hat = []
     x0 = np.concatenate((x_tes[0,:],x_ghx[0,:]),axis = None)
 
     y_hat.append(x0)
-    # Perform the integration step by steps
-    # ---
     for i in range(0,len(t_hat)-2):
         u_hat = np.concatenate(
             (u_ghx_train[i,0],u_ghx_train[i,1],
@@ -567,21 +580,12 @@ def simulate(model_tes,model_ghx, mean, covariance, mean_ghx, covariance_ghx):
 
     :return results: (list) Prediction for 7 quantities of interest
     """
-    # Sample coefficients from the fitted distribution
-    # ---
-
-    # TES
     model_tes.model[-1].coef_ = np.random.multivariate_normal(mean=mean,cov=covariance).reshape(model_tes.model[-1].coef_.shape[0],model_tes.model[-1].coef_.shape[1])
-    # GHX
     model_ghx.model[-1].coef_ = np.random.multivariate_normal(mean=mean_ghx,cov=covariance_ghx).reshape(model_ghx.model[-1].coef_.shape[0],model_ghx.model[-1].coef_.shape[1])
 
     results = simulate_sindyc(model_tes,model_ghx,x_tes_experiment_conv.T,x_ghx_experiment_conv.T,u_experiment_conv_2.T,tm2)
     return results
 
-
-    
-#save_dir = f'/home/nabiu/sindyC/newbounds500_training_data_random/'
-save_dir = "/home/unabila/ghxSindy/newbounds500_training_data_random/"
 
 def load_data(i):
 
@@ -593,7 +597,7 @@ def load_data(i):
     return x_tes_train_temp, x_ghx_train_temp, u_tes_train_temp, u_ghx_train_temp,tm2: TES, GHX states, TES, GHX actuators, and time
     """
 
-    with open('%ssaved_%d.pkl'%(save_dir,i),'rb') as infile:
+    with open(save_dir / f"saved_{i}.pkl", 'rb') as infile:
         df_teds_dc_class_all = pickle.load(infile)
 
     try:
@@ -606,33 +610,17 @@ def load_data(i):
 
 
 # Check that all indices are accounted for when the data were generated
-# Indeed, we will access the files by indices
-# ---
-
 valid_indices = []
 
-for subdir, dirs, files in os.walk(save_dir):
+for subdir, dirs, files in os.walk(str(save_dir)):
     for file in files:
         valid_indices.append(int(file.strip('.pkl').strip('saved_')))
 
 print(len(sorted(valid_indices)))
 
 
-#Load generated data from *.mat files
-# ---
-
-
-#model_dir = '/home/nabiu/ghx_sindy/newbounds_1samplestotrain_model_directory/'
-model_dir = "/home/unabila/ghxSindy/newbounds_4tj_samplestotrain_model_directory/"
-    
-# ---
-if not os.path.exists(model_dir):
-    os.mkdir(model_dir)
-
-# Load the data in parallel
-# ---
-
-ncores=10 # number of processors to run in parallel to load data faster
+# Load generated data from *.mat files
+ncores=10
 if ncores > 1:
     with joblib.Parallel(n_jobs=ncores) as parallel:
         fitness=parallel(joblib.delayed(load_data)(count)for count in range(500))
@@ -642,17 +630,10 @@ x_tes_train_all,u_tes_train_all=[],[]
 x_ghx_train_all,u_ghx_train_all=[],[]
 failed = 0
 
-# Print the shape of fitness
 print("Shape of fitness:", (len(fitness), len(fitness[0])))
 
 for elem in fitness:
-    #print("elem[0]:",elem[0])
-    #print("Shape of elem[0]:", np.shape(elem[0]))
     if elem[0] != []:
-        #print("elem[0][0]:", elem[0][0])
-        #print("Shape of elem[0][0]:", np.shape(elem[0][0]))
-        #if elem[0][0] != []:# and elem[1] != [] and elem[2] != [] and elem[3] != [] and elem[4] != []:
-
         x_tes_train_all.append(elem[0][0])
         x_ghx_train_all.append(elem[1][0])
         u_tes_train_all.append(elem[2][0])
@@ -669,23 +650,18 @@ for elem in fitness:
             u_ghx_train_all.pop(-1)
             failed +=1
 
-    #else:
-        #failed +=1
 print("Number of failed dymolas ",failed)
 
 # Load Experimental data
-# ---
-
-
 dummy_1,dummy_2,dummy_3,dummy_4,tm2=load_data(10)
 
-with open('TES_experiment_data.pkl', 'rb') as f:
+with open(TES_EXP_PKL, 'rb') as f:
     x_tes_experiment = pickle.load(f)
 
-with open('GHX_experiment_data.pkl', 'rb') as f:
+with open(GHX_EXP_PKL, 'rb') as f:
     x_ghx_experiment = pickle.load(f)
 
-with open("{}.pkl".format('U_control_experiment_data'), "rb") as f: #save the model
+with open(U_EXP_PKL, "rb") as f:
     u_experiment = pickle.load(f)
 
 
@@ -709,47 +685,35 @@ u_experiment_conv_2[3] = u_experiment_conv[2]
 
 
 #TES
-transposedTES_array = x_tes_experiment_conv.T  # Shape will be (5250, 5)
-
-# Step 3: Vertical stack
-paddedTES_array = np.pad(transposedTES_array, ((0, 1), (0, 0)), mode='edge')  # Padding to make it (5251, 5)
-
-# Step 4: Expand dimensions to get (1, 5251, 2)
-x_tes_experiment_new = np.expand_dims(paddedTES_array, axis=0)  # Shape will be (1, 5251, 5)
+transposedTES_array = x_tes_experiment_conv.T
+paddedTES_array = np.pad(transposedTES_array, ((0, 1), (0, 0)), mode='edge')
+x_tes_experiment_new = np.expand_dims(paddedTES_array, axis=0)
 
 print(x_tes_experiment_new.shape)
 
 # U EXP
-# Step 2: Transpose the array (swap rows and columns)
-transposedU_array = u_experiment_conv_2.T  # Shape will be (5250, 2)
-u_experiment_new = np.expand_dims(transposedU_array, axis=0)  # Shape will be (1, 5251, 2)
+transposedU_array = u_experiment_conv_2.T
+u_experiment_new = np.expand_dims(transposedU_array, axis=0)
 
 print(u_experiment_new.shape)
 
 #GHX
-transposed_array = x_ghx_experiment_conv.T  # Shape will be (5250, 2)
-padded_array = np.pad(transposed_array, ((0, 1), (0, 0)), mode='edge')  # Padding to make it (5251, 2)
-
-# Step 4: Expand dimensions to get (1, 5251, 2)
-x_ghx_experiment_new = np.expand_dims(padded_array, axis=0)  # Shape will be (1, 5251, 2)
+transposed_array = x_ghx_experiment_conv.T
+padded_array = np.pad(transposed_array, ((0, 1), (0, 0)), mode='edge')
+x_ghx_experiment_new = np.expand_dims(padded_array, axis=0)
 
 print(x_ghx_experiment_new.shape)
 
 # Generate and save exp models
-# ---
-
-# TES
 threshold=1e-6
 alpha=1e-3
 
-model_tes_exp = SINDyC_fit(x_tes_experiment_new,u_experiment_new,tm2,threshold=threshold,alpha=alpha,verbose=False)#threshold=1e-6,no alpha
+model_tes_exp = SINDyC_fit(x_tes_experiment_new,u_experiment_new,tm2,threshold=threshold,alpha=alpha,verbose=False)
 
 model_para_tes_experiment = model_tes_exp.coefficients().T.flatten()
 print(model_para_tes_experiment.shape)
 
-
 print(model_tes_exp.get_feature_names())
-
 model_tes_exp.print()
 
 
@@ -759,27 +723,25 @@ tm2 = np.linspace(0.0, 5251, 5251)
 threshold=1e-8
 alpha=1e-6
 
-model_ghx_exp = SINDyC_fit(x_ghx_experiment_new,u_experiment_new,tm2,threshold=threshold,alpha=alpha,verbose=False)#threshold=1e-6,no alpha
+model_ghx_exp = SINDyC_fit(x_ghx_experiment_new,u_experiment_new,tm2,threshold=threshold,alpha=alpha,verbose=False)
 
 model_para_experiment = model_ghx_exp.coefficients().T.flatten()
 print(model_para_experiment.shape)
 
-
 print(model_ghx_exp.get_feature_names())
-
 model_ghx_exp.print()
 
 
 random.seed(23)
-numb_indices = 500  #500
+numb_indices = 500
 final_set = []
 
 
-numb_trajectories = 4 # number of trajectories to fit each model 12
+numb_trajectories = 4
 if numb_trajectories > 1:
     for i in range(numb_indices):
         final_set_temp = []
-        for _ in range(numb_trajectories): # Choose numb_trajectories elements out of which we we will perform the fitting and evaluate the gaussian
+        for _ in range(numb_trajectories):
             elem = random.randint(0, np.array(x_tes_train_all).shape[0]-1)
             if elem not in final_set:
                 final_set_temp.append(elem)
@@ -789,7 +751,7 @@ if numb_trajectories > 1:
                 final_set_temp.append(elem)
         final_set.append(final_set_temp)
 else:
-    for i in range(numb_indices - 126):  #####  manually  add failed
+    for i in range(numb_indices - 126):
         final_set.append([i])
 
 
@@ -808,7 +770,7 @@ for incr, elem in enumerate(final_set):
     alpha = 1e-3
     model_tes = SINDyC_fit(list(x_tes_train), list(u_tes_train), tm2,
                            threshold=threshold, alpha=alpha,
-                           name=f'{model_dir}/TES_{incr+1}', verbose=False)
+                           name=str(model_dir / f"TES_{incr+1}"), verbose=False)
     model_tes_all.append(model_tes)
     model_para = model_tes.coefficients().transpose()
     model_para_tes_all.append(model_para.reshape(-1, 10, 5))
@@ -818,21 +780,17 @@ for incr, elem in enumerate(final_set):
     alpha = 1e-6
     model_ghx = SINDyC_fit(list(x_ghx_train), list(u_ghx_train[:, :, :-1]), tm2,
                            threshold=threshold, alpha=alpha,
-                           name=f'{model_dir}/GHX_{incr+1}', verbose=False)
+                           name=str(model_dir / f"GHX_{incr+1}"), verbose=False)
     model_ghx_all.append(model_ghx)
     model_para = model_ghx.coefficients().transpose()
     model_para_ghx_all.append(model_para.reshape(-1, 7, 2))
 
 # Stack final arrays
-model_para_tes = np.vstack(model_para_tes_all)  # shape: (N, 10, 5)
-model_para_ghx = np.vstack(model_para_ghx_all)  # shape: (N, 7, 2)
-
+model_para_tes = np.vstack(model_para_tes_all)
+model_para_ghx = np.vstack(model_para_ghx_all)
 
 print(f"Shape of model_para_tes: {model_para_tes.shape}")
-
 print(f"Shape of model_para_ghx: {model_para_ghx.shape}")
-
-
 
 #################################### %%%%%%%%%%%%%%%%%%%%%%% AL %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% ###############################
 # Initial setup
@@ -845,8 +803,6 @@ rand_numb = 100
 ncores = 10
 
 # Initial random selection
-
-
 # Step 1: Flatten GHX model parameters
 model_para_ghx_flat = model_para_ghx.reshape(total_models, -1)
 
@@ -866,8 +822,6 @@ selected_models = random.sample(list(worst_100_indices), initial_count)
 # Step 5: Define remaining indices (all others except selected)
 remaining_indices = list(set(all_indices) - set(selected_models))
 
-
-##################################
 remaining_indices = list(set(all_indices) - set(selected_models))
 
 # Flatten GHX model parameters
@@ -876,7 +830,7 @@ model_para_ghx_flat = model_para_ghx.reshape(total_models, -1)
 # Compute Mahalanobis distances once for remaining models
 remaining_flat = model_para_ghx_flat[remaining_indices]
 
-inv_cov_matrix_m = np.linalg.inv(np.cov(model_para_ghx_flat.T))  # You had typo with backslash earlier
+inv_cov_matrix_m = np.linalg.inv(np.cov(model_para_ghx_flat.T))
 
 mahalanobis_distances = [
     distance.mahalanobis(model_para_experiment, model, inv_cov_matrix_m)
@@ -919,15 +873,13 @@ while len(selected_models) <= total_models:
         x_test_sim_experiment.append(np.array(results_i)[:, :5])
         x_ghx_sim_experiment.append(np.array(results_i)[:, 5:])
 
-
-    
     # Unpack all 9 return values
     valid_ghx, avg_rmse0, avg_mae0, avg_rmse1, avg_mae1, rmse0_mean, mae0_mean, rmse1_mean, mae1_mean = plot_simulation_and_metrics(
         x_ghx_sim_experiment, selected_model_len=len(selected_models)
     )
     
     # Evaluate confidence intervals
-    valid_indices_m, valid_indices_q = valid_ghx  # from plot_simulation_and_metrics()
+    valid_indices_m, valid_indices_q = valid_ghx
     
     CI_m = get_confidence_interval_indicator_ghx(x_ghx_sim_experiment, valid_indices_m, 0)
     CI_Q = get_confidence_interval_indicator_ghx(x_ghx_sim_experiment, valid_indices_q, 1)
@@ -949,7 +901,6 @@ while len(selected_models) <= total_models:
         'MeanSim MAE Q': mae1_mean,
     })
 
-
     # Stop if finished
     if len(selected_models) == total_models:
         break
@@ -960,13 +911,12 @@ while len(selected_models) <= total_models:
     iteration += 1
 
 
-#Final check
+# Final check
 print(f"Total selected models: {len(selected_models)} (Expected: {total_models})")
-
 
 # Save all results
 results_df = pd.DataFrame(results)
-results_df.to_csv("try_4tj_CI_rmse_mae_results10init10_cor.csv", index=False)
+results_df.to_csv(RESULTS_CSV_DIR / "try_4tj_CI_rmse_mae_results10init10_cor.csv", index=False)
 
 # Extract metrics
 selected_counts = results_df['Selected Count']
@@ -985,7 +935,7 @@ plt.title('RMSE and MAE Trends for m')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("try_4tj_10int10_rmse_mae_trend_m.png", dpi=300)
+plt.savefig(RESULTS_DIR / "try_4tj_10int10_rmse_mae_trend_m.png", dpi=300)
 
 # Plot for 'Q'
 plt.figure(figsize=(8, 5))
@@ -997,7 +947,7 @@ plt.title('RMSE and MAE Trends for Q')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig("try_4tj_10int10_rmse_mae_trend_q_cor.png", dpi=300)
+plt.savefig(RESULTS_DIR / "try_4tj_10int10_rmse_mae_trend_q_cor.png", dpi=300)
 
 
 ## CI plot
@@ -1016,7 +966,7 @@ plt.title('Confidence Interval Coverage for Mass Flow')
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
-plt.savefig("try_4tj_10int10_ci_coverage_massflow.png", dpi=300)
+plt.savefig(RESULTS_DIR / "try_4tj_10int10_ci_coverage_massflow.png", dpi=300)
 
 # Plot for CI of variable Q (heat)
 plt.figure(figsize=(8, 5))
@@ -1027,7 +977,7 @@ plt.title('Confidence Interval Coverage for Heat')
 plt.grid(True)
 plt.legend()
 plt.tight_layout()
-plt.savefig("try_4tj_10int10_ci_coverage_Q.png", dpi=300)
+plt.savefig(RESULTS_DIR / "try_4tj_10int10_ci_coverage_Q.png", dpi=300)
 
 # --- Mass Flow Plot (m) ---
 plt.figure(figsize=(8, 5))
@@ -1039,7 +989,7 @@ plt.title(r'MeanSim Errors for $\dot{m}_{ghx,bypass}$')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(f'AL_{numb_trajectories}traj_{initial_count}init{increment}_meansim_error_m.png', dpi=300)
+plt.savefig(RESULTS_DIR / f'AL_{numb_trajectories}traj_{initial_count}init{increment}_meansim_error_m.png', dpi=300)
 
 # --- Heat Plot (Q) ---
 plt.figure(figsize=(8, 5))
@@ -1051,12 +1001,4 @@ plt.title(r'MeanSim Errors for $Q_{ghx}$')
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
-plt.savefig(f'AL_{numb_trajectories}traj_{initial_count}init{increment}_meansim_error_q.png', dpi=300)
-
-
-
-
-
-
-
-
+plt.savefig(RESULTS_DIR / f'AL_{numb_trajectories}traj_{initial_count}init{increment}_meansim_error_q.png', dpi=300)

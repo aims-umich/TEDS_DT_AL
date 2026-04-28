@@ -676,9 +676,23 @@ def eval_experiment_sindyc_deterministic(model_tes_cv, model_ghx_cv, selected_mo
             avg_rmse0, avg_mae0, avg_rmse1, avg_mae1,
             rmse0_mean, mae0_mean, rmse1_mean, mae1_mean)
 
-    
-#save_dir = f'/home/nabiu/sindyC/newbounds500_training_data_random/'
-save_dir = "/home/unabila/ghxSindy/newbounds500_training_data_random/"
+
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = REPO_ROOT / "data"
+RESULTS_DIR = REPO_ROOT / "results"
+RESULTS_CSV_DIR = RESULTS_DIR / "result_csv"
+
+save_dir = DATA_DIR / "newbounds500_training_data_random"
+model_dir = DATA_DIR / "newbounds_samplestotrain_model_directory"
+cv_dir = DATA_DIR / "cv_holdout_preds"
+exp_pred_dir = RESULTS_CSV_DIR / "1tj_err_exp_pred_sindy"
+OUT_METRICS = RESULTS_CSV_DIR / "incExp_errorAL10sindy_exp_metrics.csv"
+
+model_dir.mkdir(parents=True, exist_ok=True)
+cv_dir.mkdir(parents=True, exist_ok=True)
+exp_pred_dir.mkdir(parents=True, exist_ok=True)
 
 def load_data(i):
 
@@ -690,7 +704,7 @@ def load_data(i):
     return x_tes_train_temp, x_ghx_train_temp, u_tes_train_temp, u_ghx_train_temp,tm2: TES, GHX states, TES, GHX actuators, and time
     """
 
-    with open('%ssaved_%d.pkl'%(save_dir,i),'rb') as infile:
+    with open(save_dir / f"saved_{i}.pkl", "rb") as infile:
         df_teds_dc_class_all = pickle.load(infile)
 
     try:
@@ -718,9 +732,6 @@ print(len(sorted(valid_indices)))
 #Load generated data from *.mat files
 # ---
 
-
-#model_dir = '/home/nabiu/ghx_sindy/newbounds_1samplestotrain_model_directory/'
-model_dir = "/home/unabila/ghxSindy/newbounds_12tj_samplestotrain_model_directory/"
     
 # ---
 if not os.path.exists(model_dir):
@@ -772,17 +783,15 @@ print("Number of failed dymolas ",failed)
 
 # Load Experimental data
 # ---
+dummy_1, dummy_2, dummy_3, dummy_4, tm2 = load_data(10)
 
-
-dummy_1,dummy_2,dummy_3,dummy_4,tm2=load_data(10)
-
-with open('TES_experiment_data.pkl', 'rb') as f:
+with open(DATA_DIR / "TES_experiment_data.pkl", "rb") as f:
     x_tes_experiment = pickle.load(f)
 
-with open('GHX_experiment_data.pkl', 'rb') as f:
+with open(DATA_DIR / "GHX_experiment_data.pkl", "rb") as f:
     x_ghx_experiment = pickle.load(f)
 
-with open("{}.pkl".format('U_control_experiment_data'), "rb") as f: #save the model
+with open(DATA_DIR / "U_control_experiment_data.pkl", "rb") as f:
     u_experiment = pickle.load(f)
 
 

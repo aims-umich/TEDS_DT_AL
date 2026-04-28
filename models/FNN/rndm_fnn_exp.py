@@ -36,9 +36,31 @@ from pathlib import Path
 # -----------------------------
 # Config
 # -----------------------------
-REPO_ROOT = Path(__file__).resolve().parents[2]   # TEDS_DT_AL/
-DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"
-EXP_CSV  = REPO_ROOT / "data" / "experiment_csv" / "experiment_ghx_formatted.csv"
+import sys
+from pathlib import Path
+
+# Find repo root by walking upward until paths.py is found
+_THIS_FILE = Path(__file__).resolve()
+for parent in [_THIS_FILE.parent] + list(_THIS_FILE.parents):
+    if (parent / "paths.py").exists():
+        REPO_ROOT = parent
+        break
+else:
+    raise RuntimeError("Could not find repo root containing paths.py")
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+    
+    
+from paths import GHX_DATA_DIR, EXP_GHX_CSV, FNN_RANDOM_DIR, ensure_dirs
+
+ensure_dirs()
+
+DATA_DIR = GHX_DATA_DIR
+EXP_CSV = EXP_GHX_CSV
+OUT_DIR = FNN_RANDOM_DIR
+PLOT_DIR = OUT_DIR / "plots"
+PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

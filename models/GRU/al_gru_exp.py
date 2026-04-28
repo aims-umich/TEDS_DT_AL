@@ -1,420 +1,419 @@
 # -*- coding: utf-8 -*-
 """
-Active-learning GRU (NARX-style) for GHX:
-- Start with 10 random sim files, then iteratively add the 10 worst (by per-file RMSE) from the remaining pool.
-- At each iteration: train on the cumulative set, evaluate on EXP (teacher-forced), save metrics + plots.
-- Inputs (controls): ["opening_PV006","mflow_pump_out","T_pump_in","T_heater_out"]
-- Outputs (states):  ["mflow_GHX_bypass","qghx_kW"]
-- Also records per-iteration runtime and cumulative runtime.
+GRU for GHX: train on simulation CSVs, test on held-out simulation files.
+- Keeps (rid, U, X) with every run (fixes unpack error).
+- Toggle USE_X_IN_WINDOW to include past states in the GRU input.
+- Uses GPU + mixed precision if available.
+- Saves time-series + parity plots for a chosen test run ID.
 """
 
-import os, re, random, math, time
+import os
+import re
 import numpy as np
 import pandas as pd
 
-# headless plotting
+# Headless plotting
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams.update({
-    "font.size": 14, "axes.titlesize": 18, "axes.labelsize": 16,
-    "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 14,
-    "figure.titlesize": 20,
+    "font.size": 16,
+    "axes.titlesize": 20,
+    "axes.labelsize": 18,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "legend.fontsize": 16,
+    "figure.titlesize": 22,
 })
 
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 # -----------------------------
+# Path bootstrap
+# -----------------------------
+import sys
+from pathlib import Path
+
+_THIS_FILE = Path(__file__).resolve()
+for parent in [_THIS_FILE.parent] + list(_THIS_FILE.parents):
+    if (parent / "paths.py").exists():
+        REPO_ROOT = parent
+        break
+else:
+    raise RuntimeError("Could not find repo root containing paths.py")
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from paths import GHX_DATA_DIR, GRU_RESULTS_DIR, ensure_dirs
+
+ensure_dirs()
+
+# -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = "ghx_data_csv"   # folder with ghx_run{ID}.csv
-EXP_CSV  = "/home/unabila/ghxSindy/experiment_csv/experiment_ghx_formatted.csv"
-
-SEED       = 12
+DATA_DIR   = GHX_DATA_DIR
 DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
-LOOKBACK   = 300
-HIDDEN     = 256
-BATCH      = 512
-EPOCHS     = 8              # keep modest; retrains many times
-LR         = 1e-3
-NUM_WORKERS= 4
-CLIP_Z     = 3.5
-INIT_COUNT = 10
-INCREMENT  = 10
+PRINT_INFO = True
 
-CTRL_NAMES  = ["opening_PV006","mflow_pump_out","T_pump_in","T_heater_out"]
-STATE_NAMES = ["mflow_GHX_bypass","qghx_kW"]
+# Choose controls (4 by default; add T_chiller_after if you want 5)
+CTRL_NAMES  = ["opening_PV006", "mflow_pump_out", "T_pump_in", "T_heater_out"]
+# CTRL_NAMES  = ["opening_PV006", "mflow_pump_out", "T_pump_in", "T_heater_out", "T_chiller_after"]
+STATE_NAMES = ["mflow_GHX_bypass", "qghx_kW"]
 
-OUT_DIR = "time_gru_al_figs"
-os.makedirs(OUT_DIR, exist_ok=True)
+# Windowing + training
+USE_X_IN_WINDOW = True
+LOOKBACK        = 120
+BATCH           = 512
+EPOCHS          = 10
+LR              = 1e-3
+NUM_WORKERS     = 4
 
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-if DEVICE == "cuda":
-    torch.cuda.manual_seed_all(SEED)
+# What test file to plot/evaluate
+TEST_FILE_IDS_TO_EVAL = [176]
+PLOT_FILE_ID          = 176
 
+# Output
+RESULTS_DIR = GRU_RESULTS_DIR
+FIG_DIR = RESULTS_DIR
+PRED_DIR = RESULTS_DIR
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Performance knobs
 torch.backends.cudnn.benchmark = True
 if hasattr(torch, "set_float32_matmul_precision"):
     torch.set_float32_matmul_precision("high")
 
-print(f"Using device: {DEVICE}")
-if DEVICE == "cuda":
-    print("GPU:", torch.cuda.get_device_name(0))
+if PRINT_INFO:
+    print(f"Using device: {DEVICE}")
+    if DEVICE == "cuda":
+        print("GPU:", torch.cuda.get_device_name(0))
 
 # -----------------------------
-# Helpers
+# Load all runs as (rid, U, X)
 # -----------------------------
-def load_all_sim_runs(dirpath):
-    runs, ids = [], []
+def load_all(dirpath):
+    runs = []   # list of (rid, U:(T,nc), X:(T,2))
     for fn in sorted(os.listdir(dirpath)):
         m = re.match(r"ghx_run(\d+)\.csv$", fn)
-        if not m: continue
-        rid = int(m.group(1))
-        df = pd.read_csv(os.path.join(dirpath, fn))
-        if not set(CTRL_NAMES).issubset(df.columns) or not set(STATE_NAMES).issubset(df.columns):
+        if not m:
             continue
+
+        rid = int(m.group(1))
+        df = pd.read_csv(dirpath / fn)
         U = df[CTRL_NAMES].to_numpy(dtype=np.float32)
         X = df[STATE_NAMES].to_numpy(dtype=np.float32)
         T = min(len(U), len(X))
-        if T > 0:
-            runs.append((U[:T], X[:T]))
-            ids.append(rid)
-    return runs, np.array(ids, dtype=int)
+        if T == 0:
+            continue
 
-def pick(colnames, *cands):
-    cl = [c.lower() for c in colnames]
-    for cand in cands:
-        c = cand.lower()
-        for i, name in enumerate(cl):
-            if name.startswith(c):
-                return colnames[i]
-    raise KeyError(f"None of {cands} found among {colnames}")
+        runs.append((rid, U[:T], X[:T]))
+    return runs
 
-def mape_eps(y, yhat, eps=None):
-    if eps is None:
-        eps = max(1e-6, 0.02 * (np.nanmax(np.abs(y)) - np.nanmin(np.abs(y))))
-    denom = np.maximum(np.abs(y), eps)
-    return np.mean(np.abs(yhat - y) / denom) * 100.0
+runs = load_all(DATA_DIR)
+assert len(runs) > 0, "No runs found in ghx_data_csv."
+if PRINT_INFO:
+    print(f"Loaded {len(runs)} runs.")
 
 # -----------------------------
-# Dataset
+# Split by file IDs
 # -----------------------------
-class WindowedSimNARX(Dataset):
+test_indices = {12, 56, 74, 81, 121, 136, 176, 233, 266, 300}
+
+all_ids = {rid for (rid, _, _) in runs}
+missing = sorted(test_indices - all_ids)
+if missing:
+    raise ValueError(f"IDs not present in runs: {missing}")
+
+train_runs = [(rid, U, X) for (rid, U, X) in runs if rid not in test_indices]
+test_runs  = [(rid, U, X) for (rid, U, X) in runs if rid in test_indices]
+
+assert not ({rid for (rid, _, _) in train_runs} & {rid for (rid, _, _) in test_runs})
+print(f"Train: {len(train_runs)} | Test: {len(test_runs)}")
+
+test_ids = {rid for (rid, _, _) in test_runs}
+
+# -----------------------------
+# Fit scalers on TRAIN only
+# -----------------------------
+U_train_flat = np.concatenate([U for (_, U, _) in train_runs], axis=0)
+X_train_flat = np.concatenate([X for (_, _, X) in train_runs], axis=0)
+
+u_scaler = StandardScaler().fit(U_train_flat)
+y_scaler = StandardScaler().fit(X_train_flat)
+
+# -----------------------------
+# Windowed datasets
+# -----------------------------
+class WindowedRuns(Dataset):
     """
-    Each sample:
-      seq = concat([X_n[t-L:t,:], U_n[t-L:t,:]]) -> (L, 6)
-      tgt = X_n[t,:]                             -> (2,)
-    """
-    def __init__(self, runs, u_scaler, y_scaler, lookback=300, clip_z=3.5):
-        self.seq, self.tgt = [], []
-        L = lookback
-        for (U, X) in runs:
-            if len(U) <= L: 
-                continue
-            Un = u_scaler.transform(U).astype(np.float32)
-            Xn = y_scaler.transform(X).astype(np.float32)
-            np.clip(Un, -clip_z, clip_z, out=Un)
-            np.clip(Xn, -clip_z, clip_z, out=Xn)
-            T = len(Un)
-            for t in range(L, T):
-                self.seq.append(np.concatenate([Xn[t-L:t,:], Un[t-L:t,:]], axis=1))
-                self.tgt.append(Xn[t,:])
-        self.seq = np.asarray(self.seq, np.float32)  # (N,L,6)
-        self.tgt = np.asarray(self.tgt, np.float32)  # (N,2)
-
-    def __len__(self): return len(self.seq)
-    def __getitem__(self, i): return self.seq[i], self.tgt[i]
-
-# -----------------------------
-# Model
-# -----------------------------
-class GRURegressor(nn.Module):
-    def __init__(self, in_dim=6, hidden=256, out_dim=2, num_layers=1, dropout=0.0):
-        super().__init__()
-        self.rnn  = nn.GRU(in_dim, hidden, num_layers=num_layers,
-                           dropout=(dropout if num_layers>1 else 0.0),
-                           batch_first=True)
-        self.head = nn.Sequential(nn.ReLU(), nn.Linear(hidden, out_dim))
-    def forward(self, x):            # x: (B,L,in_dim)
-        out, _ = self.rnn(x)         # (B,L,H)
-        hL = out[:, -1, :]           # last step
-        return self.head(hL)         # (B,2)
-
-# -----------------------------
-# Train one model on a subset of runs
-# -----------------------------
-def train_on_runs(runs_subset, epochs=EPOCHS):
-    # Fit scalers on THIS subset
-    U_all = np.concatenate([U for (U,_) in runs_subset if len(U)>0], axis=0)
-    X_all = np.concatenate([X for (_,X) in runs_subset if len(X)>0], axis=0)
-    u_scaler = StandardScaler().fit(U_all)
-    y_scaler = StandardScaler().fit(X_all)
-
-    # Dataset & loader
-    ds = WindowedSimNARX(runs_subset, u_scaler, y_scaler, LOOKBACK, CLIP_Z)
-    if len(ds) == 0:
-        raise ValueError("Training subset produced 0 windows (too short vs LOOKBACK).")
-    pin = (DEVICE == "cuda")
-    ld  = DataLoader(ds, batch_size=BATCH, shuffle=True,
-                     pin_memory=pin, num_workers=NUM_WORKERS,
-                     persistent_workers=(NUM_WORKERS > 0))
-
-    # Model
-    model = GRURegressor(in_dim=6, hidden=HIDDEN, out_dim=2).to(DEVICE)
-    opt   = torch.optim.Adam(model.parameters(), lr=LR)
-    crit  = nn.MSELoss()
-
-    # Mixed precision if CUDA
-    use_amp = (DEVICE == "cuda")
-    if use_amp:
-        try:
-            from torch.amp import autocast as autocast_new, GradScaler as GradScalerNew
-            autocast_cm = lambda: autocast_new(device_type="cuda")
-            scaler      = GradScalerNew(device_type="cuda")
-        except Exception:
-            from torch.cuda.amp import autocast as autocast_old, GradScaler as GradScalerOld
-            autocast_cm = autocast_old
-            scaler      = GradScalerOld()
+    If USE_X_IN_WINDOW:
+        input = concat([X[t-L:t,:], U[t-L:t,:]]) -> (L, 2+nc)
     else:
-        from contextlib import nullcontext
-        autocast_cm = nullcontext
-        scaler = None
+        input = U[t-L:t,:] -> (L, nc)
+    target = X[t,:] -> (2,)
+    """
+    def __init__(self, runs_with_ids, u_scaler, y_scaler, lookback=120, use_x=False):
+        self.seq = []
+        self.tgt = []
+        L = lookback
 
-    # Train
-    for ep in range(1, epochs+1):
-        model.train(); tot = 0.0
-        for xb, yb in ld:
-            xb = xb.to(DEVICE, non_blocking=True)
-            yb = yb.to(DEVICE, non_blocking=True)
-            opt.zero_grad(set_to_none=True)
-            if scaler:
-                with autocast_cm():
-                    yp = model(xb); loss = crit(yp, yb)
-                scaler.scale(loss).backward()
-                scaler.step(opt); scaler.update()
+        for (_, U, X) in runs_with_ids:
+            if len(U) <= L:
+                continue
+
+            U_n = u_scaler.transform(U).astype(np.float32)
+            X_n = y_scaler.transform(X).astype(np.float32)
+            T = len(U_n)
+
+            for t in range(L, T):
+                if use_x:
+                    x_win = X_n[t-L:t, :]
+                    u_win = U_n[t-L:t, :]
+                    seq = np.concatenate([x_win, u_win], axis=1)
+                else:
+                    seq = U_n[t-L:t, :]
+
+                self.seq.append(seq)
+                self.tgt.append(X_n[t, :])
+
+        self.seq = np.asarray(self.seq, dtype=np.float32)
+        self.tgt = np.asarray(self.tgt, dtype=np.float32)
+
+    def __len__(self):
+        return len(self.seq)
+
+    def __getitem__(self, i):
+        return self.seq[i], self.tgt[i]
+
+train_ds = WindowedRuns(train_runs, u_scaler, y_scaler, LOOKBACK, USE_X_IN_WINDOW)
+pin = (DEVICE == "cuda")
+train_ld = DataLoader(
+    train_ds,
+    batch_size=BATCH,
+    shuffle=True,
+    pin_memory=pin,
+    num_workers=NUM_WORKERS,
+    persistent_workers=(NUM_WORKERS > 0)
+)
+
+if PRINT_INFO:
+    print(f"Train windows: {len(train_ds)} | seq {train_ds.seq.shape} | tgt {train_ds.tgt.shape}")
+
+# -----------------------------
+# GRU model
+# -----------------------------
+IN_DIM = (2 + len(CTRL_NAMES)) if USE_X_IN_WINDOW else len(CTRL_NAMES)
+
+class GRURegressor(nn.Module):
+    def __init__(self, in_dim, hidden=128, out_dim=2, num_layers=1, dropout=0.0):
+        super().__init__()
+        self.rnn = nn.GRU(
+            input_size=in_dim,
+            hidden_size=hidden,
+            num_layers=num_layers,
+            dropout=(dropout if num_layers > 1 else 0.0),
+            batch_first=True
+        )
+        self.head = nn.Sequential(
+            nn.ReLU(),
+            nn.Linear(hidden, out_dim)
+        )
+
+    def forward(self, x):
+        out, _ = self.rnn(x)
+        hL = out[:, -1, :]
+        return self.head(hL)
+
+model = GRURegressor(in_dim=IN_DIM, hidden=128, out_dim=2).to(DEVICE)
+opt = torch.optim.Adam(model.parameters(), lr=LR)
+crit = nn.MSELoss()
+
+# Mixed precision
+use_amp = (DEVICE == "cuda")
+if use_amp:
+    try:
+        from torch.amp import autocast as autocast_new, GradScaler as GradScalerNew
+        autocast_cm = lambda: autocast_new(device_type="cuda")
+        scaler = GradScalerNew(device_type="cuda")
+    except Exception:
+        from torch.cuda.amp import autocast as autocast_old, GradScaler as GradScalerOld
+        autocast_cm = autocast_old
+        scaler = GradScalerOld()
+else:
+    from contextlib import nullcontext
+    autocast_cm = nullcontext
+    scaler = None
+
+if PRINT_INFO:
+    print("Model on:", next(model.parameters()).device)
+    print(f"Input dim: {IN_DIM}  (USE_X_IN_WINDOW={USE_X_IN_WINDOW})")
+
+# -----------------------------
+# Train
+# -----------------------------
+for ep in range(EPOCHS):
+    model.train()
+    tot = 0.0
+    for xb, yb in train_ld:
+        xb = xb.to(DEVICE, non_blocking=True)
+        yb = yb.to(DEVICE, non_blocking=True)
+        opt.zero_grad(set_to_none=True)
+
+        if scaler:
+            with autocast_cm():
+                yp = model(xb)
+                loss = crit(yp, yb)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+        else:
+            yp = model(xb)
+            loss = crit(yp, yb)
+            loss.backward()
+            opt.step()
+
+        tot += loss.item() * xb.size(0)
+
+    if PRINT_INFO:
+        print(f"Epoch {ep+1:02d} | train MSE={tot/len(train_ds):.6f}")
+
+# -----------------------------
+# Evaluate selected test files
+# -----------------------------
+TEST_FILE_IDS_TO_EVAL = [rid for rid in TEST_FILE_IDS_TO_EVAL if rid in test_ids]
+assert len(TEST_FILE_IDS_TO_EVAL) > 0, "Requested test IDs are not in the test split."
+
+metrics_rows  = []
+all_pred_rows = []
+plot_done = False
+
+model.eval()
+with torch.no_grad():
+    for rid, U, X in test_runs:
+        if rid not in TEST_FILE_IDS_TO_EVAL:
+            continue
+        if len(U) <= LOOKBACK:
+            print(f"Skip file {rid}: too short (T={len(U)} <= L={LOOKBACK})")
+            continue
+
+        U_n = u_scaler.transform(U).astype(np.float32)
+        X_n = y_scaler.transform(X).astype(np.float32)
+
+        seqs = []
+        for t in range(LOOKBACK, len(U_n)):
+            if USE_X_IN_WINDOW:
+                seq = np.concatenate([X_n[t-LOOKBACK:t, :], U_n[t-LOOKBACK:t, :]], axis=1)
             else:
-                yp = model(xb); loss = crit(yp, yb)
-                loss.backward(); opt.step()
-            tot += loss.item() * xb.size(0)
-        print(f"  epoch {ep:02d} | train MSE={tot/len(ds):.6f}")
+                seq = U_n[t-LOOKBACK:t, :]
+            seqs.append(seq)
+        seqs = np.asarray(seqs, dtype=np.float32)
 
-    return model, u_scaler, y_scaler
-
-# -----------------------------
-# Evaluate per-sim-file RMSE (teacher-forced)
-# -----------------------------
-def per_file_rmse(model, u_scaler, y_scaler, run):
-    U, X = run
-    if len(U) <= LOOKBACK:
-        return np.nan, np.nan, np.inf   # skip short files
-    Un = u_scaler.transform(U).astype(np.float32)
-    Xn = y_scaler.transform(X).astype(np.float32)
-    np.clip(Un, -CLIP_Z, CLIP_Z, out=Un)
-    np.clip(Xn, -CLIP_Z, CLIP_Z, out=Xn)
-    L = LOOKBACK
-    seqs = np.stack([np.concatenate([Xn[t-L:t,:], Un[t-L:t,:]], axis=1)
-                     for t in range(L, len(Un))], axis=0)    # (T-L, L, 6)
-    with torch.no_grad():
-        xb   = torch.tensor(seqs, device=DEVICE)
+        xb = torch.tensor(seqs, device=DEVICE)
         Yp_n = model(xb).cpu().numpy()
-    Yp = y_scaler.inverse_transform(Yp_n)
-    X_true = X[L:, :]
-    rmse_m = mean_squared_error(X_true[:,0], Yp[:,0], squared=False)
-    rmse_q = mean_squared_error(X_true[:,1], Yp[:,1], squared=False)
-    combined = 0.5 * (rmse_m + rmse_q)
-    return rmse_m, rmse_q, combined
+        Yp = y_scaler.inverse_transform(Yp_n)
+
+        X_true = X[LOOKBACK:, :]
+        T_eff = len(Yp)
+
+        csv_path = DATA_DIR / f"ghx_run{rid}.csv"
+        try:
+            df_src = pd.read_csv(csv_path)
+            if "time_s" in df_src.columns:
+                time_s = df_src["time_s"].values[LOOKBACK:LOOKBACK + T_eff]
+            else:
+                time_s = np.arange(LOOKBACK, LOOKBACK + T_eff)
+        except Exception:
+            time_s = np.arange(LOOKBACK, LOOKBACK + T_eff)
+
+        df_pred = pd.DataFrame({
+            "rid": rid,
+            "t_index": np.arange(LOOKBACK, LOOKBACK + T_eff, dtype=int),
+            "time_s": time_s,
+            "m_true": X_true[:, 0],
+            "m_pred": Yp[:, 0],
+            "q_true": X_true[:, 1],
+            "q_pred": Yp[:, 1],
+        })
+        out_file = PRED_DIR / f"pred_{rid}.csv"
+        df_pred.to_csv(out_file, index=False)
+        all_pred_rows.append(df_pred)
+        print(f"[SAVED] {out_file}")
+
+        rmse_m = mean_squared_error(X_true[:, 0], Yp[:, 0], squared=False)
+        rmse_q = mean_squared_error(X_true[:, 1], Yp[:, 1], squared=False)
+        mae_m  = mean_absolute_error(X_true[:, 0], Yp[:, 0])
+        mae_q  = mean_absolute_error(X_true[:, 1], Yp[:, 1])
+        metrics_rows.append([rid, rmse_m, rmse_q, mae_m, mae_q])
+
+        if not plot_done and rid == PLOT_FILE_ID:
+            t = time_s.astype(float)
+
+            plt.figure(figsize=(10, 3))
+            plt.plot(t, X_true[:, 0], label="m true")
+            plt.plot(t, Yp[:, 0], label="m pred (GRU)", alpha=0.85)
+            plt.xlabel("time (s)")
+            plt.ylabel("mflow_GHX_bypass")
+            plt.title(f"File {rid} m: true vs pred (GRU, L={LOOKBACK})")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(FIG_DIR / f"file_{rid}_m_timeseries.png", dpi=300)
+            plt.close()
+
+            plt.figure(figsize=(10, 3))
+            plt.plot(t, X_true[:, 1], label="q true")
+            plt.plot(t, Yp[:, 1], label="q pred (GRU)", alpha=0.85)
+            plt.xlabel("time (s)")
+            plt.ylabel("qghx_kW")
+            plt.title(f"File {rid} q: true vs pred (GRU, L={LOOKBACK})")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(FIG_DIR / f"file_{rid}_q_timeseries.png", dpi=300)
+            plt.close()
+
+            plt.figure(figsize=(5, 5))
+            plt.scatter(X_true[:, 0], Yp[:, 0], s=6, alpha=0.45)
+            lo, hi = float(min(X_true[:, 0].min(), Yp[:, 0].min())), float(max(X_true[:, 0].max(), Yp[:, 0].max()))
+            plt.plot([lo, hi], [lo, hi], "--")
+            plt.xlabel("m true")
+            plt.ylabel("m pred (GRU)")
+            plt.title(f"File {rid} parity m")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(FIG_DIR / f"file_{rid}_m_parity.png", dpi=300)
+            plt.close()
+
+            plt.figure(figsize=(5, 5))
+            plt.scatter(X_true[:, 1], Yp[:, 1], s=6, alpha=0.45)
+            lo, hi = float(min(X_true[:, 1].min(), Yp[:, 1].min())), float(max(X_true[:, 1].max(), Yp[:, 1].max()))
+            plt.plot([lo, hi], [lo, hi], "--")
+            plt.xlabel("q true")
+            plt.ylabel("q pred (GRU)")
+            plt.title(f"File {rid} parity q")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(FIG_DIR / f"file_{rid}_q_parity.png", dpi=300)
+            plt.close()
+
+            plot_done = True
 
 # -----------------------------
-# Evaluate on EXP (teacher-forced) + plots
+# Print/save metrics
 # -----------------------------
-def eval_experiment_and_plot(iter_idx, n_train_files, model, u_scaler, y_scaler):
-    dfe = pd.read_csv(EXP_CSV)
-    cols = list(dfe.columns)
+if len(metrics_rows):
+    print("\n== Per-file metrics (GRU) ==")
+    for rid, rm_m, rm_q, ma_m, ma_q in metrics_rows:
+        print(f"File {rid:>4d} | RMSE m={rm_m:.3f} q={rm_q:.3f} | MAE m={ma_m:.3f} q={ma_q:.3f}")
 
-    # robust mapping from exp headers
-    col_open  = pick(cols, "opening_pv006", "opening_p")
-    col_mflow = pick(cols, "mflow_pump_out", "mflow_pun")
-    col_tpin  = pick(cols, "t_pump_in")
-    col_theat = pick(cols, "t_heater_out", "t_heater_c")
-    ctrl_exp  = [col_open, col_mflow, col_tpin, col_theat]
-    for c in STATE_NAMES:
-        if c not in dfe.columns:
-            raise ValueError(f"Missing state column '{c}' in {EXP_CSV}")
-
-    U_exp = dfe[ctrl_exp].to_numpy(dtype=np.float32)
-    X_exp = dfe[STATE_NAMES].to_numpy(dtype=np.float32)
-    t_vec = dfe["time_sec"].to_numpy(dtype=float) if "time_sec" in dfe.columns else np.arange(len(U_exp), dtype=float)
-
-    mask = np.isfinite(U_exp).all(axis=1) & np.isfinite(X_exp).all(axis=1)
-    U_exp, X_exp, t_vec = U_exp[mask], X_exp[mask], t_vec[mask]
-    T = min(len(U_exp), len(X_exp))
-    U_exp, X_exp, t_vec = U_exp[:T], X_exp[:T], t_vec[:T]
-    if T <= LOOKBACK:
-        raise ValueError(f"Experiment too short for LOOKBACK={LOOKBACK}: T={T}")
-
-    # scale/clip
-    U_exp_n = u_scaler.transform(U_exp).astype(np.float32)
-    X_exp_n = y_scaler.transform(X_exp).astype(np.float32)
-    np.clip(U_exp_n, -CLIP_Z, CLIP_Z, out=U_exp_n)
-    np.clip(X_exp_n, -CLIP_Z, CLIP_Z, out=X_exp_n)
-
-    L = LOOKBACK
-    seqs = np.stack([np.concatenate([X_exp_n[t-L:t,:], U_exp_n[t-L:t,:]], axis=1)
-                     for t in range(L, T)], axis=0)         # (T-L, L, 6)
-
-    model.eval()
-    with torch.no_grad():
-        xb   = torch.tensor(seqs, device=DEVICE)
-        Yp_n = model(xb).cpu().numpy()
-    Yp     = y_scaler.inverse_transform(Yp_n)
-    X_true = X_exp[L:, :]
-    t_plot = t_vec[L:]
-
-    # metrics
-    rmse_m = mean_squared_error(X_true[:,0], Yp[:,0], squared=False)
-    rmse_q = mean_squared_error(X_true[:,1], Yp[:,1], squared=False)
-    mae_m  = mean_absolute_error(X_true[:,0], Yp[:,0])
-    mae_q  = mean_absolute_error(X_true[:,1], Yp[:,1])
-    r2_m   = r2_score(X_true[:,0], Yp[:,0])
-    r2_q   = r2_score(X_true[:,1], Yp[:,1])
-
-    print(f"[Iter {iter_idx}] files={n_train_files} | EXP: rmse_m={rmse_m:.4f} rmse_q={rmse_q:.4f} "
-          f"mae_m={mae_m:.4f} mae_q={mae_q:.4f} r2_m={r2_m:.4f} r2_q={r2_q:.4f}")
-
-    # plots
-    tag = f"iter_{iter_idx:03d}_n{n_train_files}"
-    os.makedirs(OUT_DIR, exist_ok=True)
-
-    # m vs time
-    plt.figure(figsize=(12,4))
-    plt.plot(t_plot, X_true[:,0], label="m true (exp)")
-    plt.plot(t_plot, Yp[:,0], label="m pred", alpha=0.85)
-    plt.xlabel("time (s)"); plt.ylabel("mflow_GHX_bypass")
-    plt.title(f"Experiment m: true vs pred | {tag}")
-    plt.legend(); plt.grid(True, alpha=0.3)
-    plt.tight_layout(pad=0.6)
-    plt.savefig(os.path.join(OUT_DIR, f"{tag}_m_timeseries.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-
-    # q vs time
-    plt.figure(figsize=(12,4))
-    plt.plot(t_plot, X_true[:,1], label="q true (exp)")
-    plt.plot(t_plot, Yp[:,1], label="q pred", alpha=0.85)
-    plt.xlabel("time (s)"); plt.ylabel("qghx_kW")
-    plt.title(f"Experiment q: true vs pred | {tag}")
-    plt.legend(); plt.grid(True, alpha=0.3)
-    plt.tight_layout(pad=0.6)
-    plt.savefig(os.path.join(OUT_DIR, f"{tag}_q_timeseries.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-
-    # Return metrics for CSV
-    return dict(
-        iter=iter_idx, n_files=n_train_files,
-        rmse_m=float(rmse_m), rmse_q=float(rmse_q),
-        mae_m=float(mae_m),   mae_q=float(mae_q),
-        r2_m=float(r2_m),     r2_q=float(r2_q)
-    )
-
-# -----------------------------
-# MAIN: Active-learning loop (with timing)
-# -----------------------------
-runs, file_ids = load_all_sim_runs(DATA_DIR)
-total_files = len(runs)
-assert total_files > 0, "No simulation runs found."
-
-all_indices      = list(range(total_files))
-# selected_indices = random.sample(all_indices, min(INIT_COUNT, total_files))
-selected_indices = [14, 21, 35, 39, 42, 57, 73, 101, 245, 299]
-remaining_indices= [i for i in all_indices if i not in selected_indices]
-
-print(f"Total files: {total_files}")
-print(f"Initial selected: {len(selected_indices)} | Remaining: {len(remaining_indices)}")
-
-results = []
-iteration = 0
-
-t0 = time.perf_counter()  # global start
-
-while True:
-    iter_start = time.perf_counter()
-
-    iteration += 1
-    # Build current training subset
-    train_subset = [runs[i] for i in selected_indices]
-    print(f"\n=== Iter {iteration} | training with {len(selected_indices)} files ===")
-    model, u_scaler, y_scaler = train_on_runs(train_subset, epochs=EPOCHS)
-
-    # Evaluate EXP & save plots/metrics
-    metrics = eval_experiment_and_plot(iteration, len(selected_indices), model, u_scaler, y_scaler)
-
-
-
-    # If no remaining files, we're done
-    if len(remaining_indices) == 0:
-        break
-
-    # Score remaining files (teacher-forced) and pick worst K
-    print("  Scoring remaining simulation files...")
-    perfile = []
-    for idx in remaining_indices:
-        rmse_m, rmse_q, combined = per_file_rmse(model, u_scaler, y_scaler, runs[idx])
-        perfile.append((idx, rmse_m, rmse_q, combined))
-
-    # Filter out NaNs (too-short files) from selection
-    perfile = [(i, rm, rq, c) for (i, rm, rq, c) in perfile if np.isfinite(c)]
-    if len(perfile) == 0:
-        print("No valid remaining files to add (likely all too short). Stopping.")
-        break
-
-    perfile.sort(key=lambda x: x[3], reverse=True)  # worst first by combined RMSE
-    k = min(INCREMENT, len(perfile))
-    new_pick = [i for (i, _, _, _) in perfile[:k]]
-
-    # Update pools
-    selected_indices.extend(new_pick)
-    remaining_indices = [i for i in remaining_indices if i not in new_pick]
-
-    print(f"  Added {k} worst files. Now selected={len(selected_indices)} remaining={len(remaining_indices)}")
-    
-        # timing
-    iter_runtime = time.perf_counter() - iter_start
-    cum_runtime  = time.perf_counter() - t0
-    metrics["iter_runtime_sec"] = float(iter_runtime)
-    metrics["cumulative_runtime_sec"] = float(cum_runtime)
-
-    results.append(metrics)
-
-# -----------------------------
-# Save summary CSV + curves
-# -----------------------------
-df = pd.DataFrame(results).sort_values("n_files").reset_index(drop=True)
-csv_path = os.path.join(OUT_DIR, "active_learning_exp_metrics.csv")
-df.to_csv(csv_path, index=False)
-print(f"\nSaved experiment metrics to {csv_path}")
-
-# Curves: RMSE & MAE vs #files (optional – unchanged)
-plt.figure(figsize=(10,5))
-plt.plot(df["n_files"], df["rmse_m"], marker="o", label="RMSE m")
-plt.plot(df["n_files"], df["rmse_q"], marker="o", label="RMSE q")
-plt.xlabel("# simulation files used for training (cumulative)")
-plt.ylabel("RMSE")
-plt.title("EXP RMSE vs # training files (active learning)")
-plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-plt.savefig(os.path.join(OUT_DIR, "exp_rmse_vs_files.png"), dpi=300); plt.close()
-
-plt.figure(figsize=(10,5))
-plt.plot(df["n_files"], df["mae_m"], marker="o", label="MAE m")
-plt.plot(df["n_files"], df["mae_q"], marker="o", label="MAE q")
-plt.xlabel("# simulation files used for training (cumulative)")
-plt.ylabel("MAE")
-plt.title("EXP MAE vs # training files (active learning)")
-plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
-plt.savefig(os.path.join(OUT_DIR, "exp_mae_vs_files.png"), dpi=300); plt.close()
-
-print(f"Saved plots to {OUT_DIR}/")
+    df_metrics = pd.DataFrame(metrics_rows, columns=["rid", "rmse_m", "rmse_q", "mae_m", "mae_q"])
+    df_metrics.to_csv(PRED_DIR / "gru_metrics.csv", index=False)
+    print(f"[SAVED] {PRED_DIR / 'gru_metrics.csv'}")
+else:
+    print("No selected test files were evaluated. Check TEST_FILE_IDS_TO_EVAL and test split.")

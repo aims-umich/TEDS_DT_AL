@@ -578,9 +578,14 @@ def simulate(model_tes,model_ghx, mean, covariance, mean_ghx, covariance_ghx):
     return results
 
 
-    
-#save_dir = f'/home/nabiu/sindyC/newbounds500_training_data_random/'
-save_dir = "/home/unabila/ghxSindy/newbounds500_training_data_random/"
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]   # TEDS_DT_AL/
+DATA_DIR = REPO_ROOT / "data"
+
+save_dir = DATA_DIR / "newbounds500_training_data_random"
+model_dir = DATA_DIR / "newbounds_samplestotrain_model_directory"
+model_dir.mkdir(parents=True, exist_ok=True)
 
 def load_data(i):
 
@@ -592,7 +597,7 @@ def load_data(i):
     return x_tes_train_temp, x_ghx_train_temp, u_tes_train_temp, u_ghx_train_temp,tm2: TES, GHX states, TES, GHX actuators, and time
     """
 
-    with open('%ssaved_%d.pkl'%(save_dir,i),'rb') as infile:
+    with open(save_dir / f"saved_{i}.pkl", "rb") as infile:
         df_teds_dc_class_all = pickle.load(infile)
 
     try:
@@ -610,23 +615,12 @@ def load_data(i):
 
 valid_indices = []
 
-for subdir, dirs, files in os.walk(save_dir):
+for subdir, dirs, files in os.walk(str(save_dir)):
     for file in files:
         valid_indices.append(int(file.strip('.pkl').strip('saved_')))
 
 print(len(sorted(valid_indices)))
 
-
-#Load generated data from *.mat files
-# ---
-
-
-#model_dir = '/home/nabiu/ghx_sindy/newbounds_1samplestotrain_model_directory/'
-model_dir = "/home/unabila/ghxSindy/newbounds_8_samplestotrain_model_directory/"
-    
-# ---
-if not os.path.exists(model_dir):
-    os.mkdir(model_dir)
 
 # Load the data in parallel
 # ---
@@ -702,10 +696,19 @@ u_ghx_train = [u_ghx_train_all[i][:, :4] for i in train_indices]  # list of (525
 threshold_tes, alpha_tes = 1e-6, 1e-3
 threshold_ghx, alpha_ghx = 1e-8, 1e-6
 
-model_tes_cv = SINDyC_fit(x_tes_train, u_tes_train, tm2, threshold=threshold_tes, alpha=alpha_tes,
-                          name=f'{model_dir}/TES_cv', verbose=False)
-model_ghx_cv = SINDyC_fit(x_ghx_train, u_ghx_train, tm2, threshold=threshold_ghx, alpha=alpha_ghx,
-                          name=f'{model_dir}/GHX_cv', verbose=False)
+model_tes_cv = SINDyC_fit(
+    x_tes_train, u_tes_train, tm2,
+    threshold=threshold_tes, alpha=alpha_tes,
+    name=str(model_dir / "TES_cv"),
+    verbose=False
+)
+
+model_ghx_cv = SINDyC_fit(
+    x_ghx_train, u_ghx_train, tm2,
+    threshold=threshold_ghx, alpha=alpha_ghx,
+    name=str(model_dir / "GHX_cv"),
+    verbose=False
+)
 
 # --- 5) Treat index 363 as *experiment* so existing code keeps working ---
 
@@ -741,12 +744,20 @@ mae_m  = mean_absolute_error(true_ghx[:, 0], pred_ghx[:, 0])
 rmse_q = np.sqrt(mean_squared_error(true_ghx[:, 1], pred_ghx[:, 1]))
 mae_q  = mean_absolute_error(true_ghx[:, 1], pred_ghx[:, 1])
 
-print(f"[METRICS] idx=363 | mflow: RMSE={rmse_m:.4f}, MAE={mae_m:.4f} | "
-      f"Q: RMSE={rmse_q:.4f}, MAE={mae_q:.4f}")
+print(
+    f"[METRICS] idx={target_idx} | "
+    f"mflow: RMSE={rmse_m:.4f}, MAE={mae_m:.4f} | "
+    f"Q: RMSE={rmse_q:.4f}, MAE={mae_q:.4f}"
+)
 
 # --- 8) Save predicted vs true series + one-row metrics CSV ---
-os.makedirs("cv_holdout_preds", exist_ok=True)
+CV_DIR = DATA_DIR / "cv_holdout_preds"
+CV_DIR.mkdir(parents=True, exist_ok=True)
+
 time_s = np.asarray(tm2[:-1])[:T_pred]
+
+pred_csv = CV_DIR / f"ghx_pred_index{target_idx}.csv"
+metrics_csv = CV_DIR / f"ghx_metrics_index{target_idx}.csv"
 
 pd.DataFrame({
     "time_s": time_s,
@@ -754,7 +765,7 @@ pd.DataFrame({
     "mflow_pred_kgps": pred_ghx[:, 0],
     "Q_true_kW": true_ghx[:, 1],
     "Q_pred_kW": pred_ghx[:, 1],
-}).to_csv("cv_holdout_preds/ghx_pred_index363.csv", index=False)
+}).to_csv(pred_csv, index=False)
 
 pd.DataFrame([{
     "index": target_idx,
@@ -764,12 +775,15 @@ pd.DataFrame([{
     "mae_Q": mae_q,
     "train_size": len(train_indices),
     "num_test": len(test_indices)
-}]).to_csv("cv_holdout_preds/ghx_metrics_index363.csv", index=False)
+}]).to_csv(metrics_csv, index=False)
 
-print("[SAVED] cv_holdout_preds/ghx_pred_index363.csv")
-print("[SAVED] cv_holdout_preds/ghx_metrics_index363.csv")
+print(f"[SAVED] {pred_csv}")
+print(f"[SAVED] {metrics_csv}")
 
-# --- 1) Time-series overlays ---
+# --- 9) Time-series overlays ---
+mflow_plot = CV_DIR / f"idx{target_idx}_mflow_true_vs_pred_timeseries.png"
+q_plot     = CV_DIR / f"idx{target_idx}_Q_true_vs_pred_timeseries.png"
+
 # mflow (kg/s)
 plt.figure(figsize=(9, 5))
 plt.plot(time_s, true_ghx[:, 0], label="True mflow (kg/s)")
@@ -780,7 +794,7 @@ plt.ylabel("mflow_GHX_bypass (kg/s)")
 plt.grid(True, alpha=0.3)
 plt.legend()
 plt.tight_layout()
-plt.savefig("cv_holdout_preds/idx363_mflow_true_vs_pred_timeseries.png", dpi=200)
+plt.savefig(mflow_plot, dpi=200)
 plt.close()
 
 # Q (kW)
@@ -793,9 +807,11 @@ plt.ylabel("Q_ghx (kW)")
 plt.grid(True, alpha=0.3)
 plt.legend()
 plt.tight_layout()
-plt.savefig("cv_holdout_preds/idx363_Q_true_vs_pred_timeseries.png", dpi=200)
+plt.savefig(q_plot, dpi=200)
 plt.close()
 
+print(f"[SAVED] {mflow_plot}")
+print(f"[SAVED] {q_plot}")
 
 
 

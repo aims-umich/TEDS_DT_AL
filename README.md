@@ -53,7 +53,7 @@ This repository compares four surrogate model types:
    - strong performance for transient dynamic prediction
 
 ---
-Environment Setup
+### Environment Setup
 
 Clone the repository and move into the project folder:
 
@@ -65,9 +65,7 @@ Create the Conda environment from the provided environment file:
 conda env create -f environment_torch.yml
 conda activate torchgpu
 
-If the environment name inside environment_torch.yml is different, replace torchgpu with the correct name.
-
-Example 1: FNN with experimental data
+### Example 1: FNN with experimental data
 
 Run:
 
@@ -89,7 +87,7 @@ For example:
 
 results/result_csv/fnn_active_figs/active_learning_exp_metrics.csv
 
-Example 2: Experimental prediction comparison plot
+### Example 2: Experimental prediction comparison plot
 
 Run:
 
@@ -102,9 +100,8 @@ SINDyC
 GRU
 FNN (with EXP)
 FNN (w/o EXP)
-Expected output
 
-The comparison figure is typically saved in:
+Expected output: The comparison figure is typically saved in:
 
 results/
 
