@@ -32,12 +32,14 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-
+from pathlib import Path
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = "ghx_data_csv"  # folder with ghx_run{idx}.csv
-EXP_CSV  = "/home/unabila/ghxSindy/experiment_csv/experiment_ghx_formatted.csv"
+REPO_ROOT = Path(__file__).resolve().parents[2]   # TEDS_DT_AL/
+DATA_DIR = REPO_ROOT / "data" / "ghx_data_csv"
+EXP_CSV  = REPO_ROOT / "data" / "experiment_csv" / "experiment_ghx_formatted.csv"
+
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PRINT_SHAPES = True
@@ -59,10 +61,12 @@ CTRL4       = CTRL_NAMES[:4]  # opening, mflow, T_pump_in, T_heater_out
 STATE_NAMES = ["mflow_GHX_bypass","qghx_kW"]  # m, q
 
 # Output dirs
-OUT_DIR  = "rndmFNN_sampling_results_fnn"
-PLOT_DIR = os.path.join(OUT_DIR, "plots")
-os.makedirs(PLOT_DIR, exist_ok=True)
-os.makedirs(OUT_DIR, exist_ok=True)
+RESULTS_DIR = REPO_ROOT / "results" / "result_csv"
+OUT_DIR  = RESULTS_DIR / "rndmFNN_sampling_results_fnn"
+PLOT_DIR = OUT_DIR / "plots"
+
+PLOT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 torch.backends.cudnn.benchmark = True
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
@@ -82,7 +86,7 @@ def load_all(dirpath):
         if not m:
             continue
         rid = int(m.group(1))
-        df = pd.read_csv(os.path.join(dirpath, fn))
+        df = pd.read_csv(dirpath / fn)
         if not set(CTRL4).issubset(df.columns) or not set(STATE_NAMES).issubset(df.columns):
             continue
         U = df[CTRL4].to_numpy(dtype=np.float32)
@@ -99,7 +103,7 @@ n_sim_files = len(sim_runs_all)
 if PRINT_SHAPES:
     print(f"Loaded {n_sim_files} sim runs.")
 
-# Load experiment once (raw) — will also be used as a "run" in the pool
+# Load experiment once (raw) â€” will also be used as a "run" in the pool
 dfe = pd.read_csv(EXP_CSV)
 missing = [c for c in CTRL4 + STATE_NAMES if c not in dfe.columns]
 if len(missing):
@@ -185,7 +189,7 @@ def eval_on_experiment(model, u_scaler, y_scaler):
     return X_pred, dict(rmse_m=float(rmse_m), rmse_q=float(rmse_q), mae_m=float(mae_m), mae_q=float(mae_q))
 
 def plot_iteration(iteration, n_files, t_vec, X_true, X_pred, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # m vs time
     plt.figure(figsize=(12,4))
@@ -195,7 +199,7 @@ def plot_iteration(iteration, n_files, t_vec, X_true, X_pred, out_dir):
     plt.title(f"FNN: Iter {iteration} (n={n_files}) m vs time")
     plt.legend(); plt.grid(True, alpha=0.3)
     plt.tight_layout(pad=0.6)
-    m_path = os.path.join(out_dir, f"iter_{iteration:03d}_n{n_files}_m_timeseries.png")
+    m_path = out_dir / f"iter_{iteration:03d}_n{n_files}_m_timeseries.png"
     #plt.savefig(m_path, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -207,11 +211,10 @@ def plot_iteration(iteration, n_files, t_vec, X_true, X_pred, out_dir):
     plt.title(f"FNN: Iter {iteration} (n={n_files}) q vs time")
     plt.legend(); plt.grid(True, alpha=0.3)
     plt.tight_layout(pad=0.6)
-    q_path = os.path.join(out_dir, f"iter_{iteration:03d}_n{n_files}_q_timeseries.png")
+    q_path = out_dir / f"iter_{iteration:03d}_n{n_files}_q_timeseries.png"
     #plt.savefig(q_path, dpi=300, bbox_inches="tight")
     plt.close()
 
-    # Parity plots (optional but handy)
     plt.figure(figsize=(6,6))
     plt.scatter(X_true[:,0], X_pred[:,0], s=18, alpha=0.5)
     lo = float(min(X_true[:,0].min(), X_pred[:,0].min()))
@@ -221,7 +224,7 @@ def plot_iteration(iteration, n_files, t_vec, X_true, X_pred, out_dir):
     plt.title(f"FNN Parity: m (n={n_files})")
     plt.grid(True, alpha=0.3)
     plt.tight_layout(pad=0.6)
-    mp_path = os.path.join(out_dir, f"iter_{iteration:03d}_n{n_files}_m_parity.png")
+    mp_path = out_dir / f"iter_{iteration:03d}_n{n_files}_m_parity.png"
     #plt.savefig(mp_path, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -234,7 +237,7 @@ def plot_iteration(iteration, n_files, t_vec, X_true, X_pred, out_dir):
     plt.title(f"FNN Parity: q (n={n_files})")
     plt.grid(True, alpha=0.3)
     plt.tight_layout(pad=0.6)
-    qp_path = os.path.join(out_dir, f"iter_{iteration:03d}_n{n_files}_q_parity.png")
+    qp_path = out_dir / f"iter_{iteration:03d}_n{n_files}_q_parity.png"
     #plt.savefig(qp_path, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -316,7 +319,7 @@ while True:
 # Save CSV summary (+ optional runtime plots)
 # -----------------------------
 df_out = pd.DataFrame(results_rows)
-csv_path = os.path.join(OUT_DIR, "incremental_metrics.csv")
+csv_path = OUT_DIR / "incremental_metrics.csv"
 df_out.to_csv(csv_path, index=False)
 print(f"\nSaved incremental metrics to: {csv_path}")
 print(f"Plots saved in: {PLOT_DIR}")
